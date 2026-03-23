@@ -1,0 +1,45 @@
+[package]
+name = "glide"
+version = "0.1.0"
+edition = "2024"
+description = "A macOS dictation app with spectrum analyzer overlay"
+
+[dependencies]
+# UI
+gpui = "0.2"
+gpui-component = "0.5"
+gpui-component-assets = "0.5"
+
+# Audio capture
+cpal = "0.15"
+hound = "3"
+
+# FFT / spectrum analysis for visualizer
+spectrum-analyzer = "1"
+
+# HTTP client for STT and LLM API calls
+reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"] }
+
+# Clipboard and simulated paste
+arboard = "3"
+enigo = "0.2"
+
+# Configuration
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+dirs = "6"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+anyhow = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+gpui = { version = "0.2", features = ["test-support"] }
+
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }
