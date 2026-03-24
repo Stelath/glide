@@ -4,23 +4,28 @@ use serde::Deserialize;
 
 use crate::{
     audio::AudioFormat,
-    config::{GlideConfig, OpenAiSttConfig},
+    config::GlideConfig,
 };
 
 pub struct OpenAiSttProvider {
     client: Client,
-    config: OpenAiSttConfig,
+    endpoint: String,
+    default_model: String,
     api_key: String,
 }
 
 impl OpenAiSttProvider {
     pub fn new(config: GlideConfig) -> Result<Self> {
-        let provider_config = config.stt.openai.clone();
-        let api_key = provider_config.resolve_api_key()?;
+        let provider = config.stt.provider;
+        let creds = config.providers.credentials_for(provider);
+        let api_key = creds.resolve_api_key("speech-to-text")?;
+        let endpoint = provider.stt_endpoint(&creds.base_url);
+        let default_model = config.llm.prompt.default_stt_model.clone();
 
         Ok(Self {
             client: Client::new(),
-            config: provider_config,
+            endpoint,
+            default_model,
             api_key,
         })
     }
@@ -44,29 +49,29 @@ impl super::SttProvider for OpenAiSttProvider {
             .context("failed to create audio upload body")?;
 
         let form = multipart::Form::new()
-            .text("model", self.config.model.clone())
+            .text("model", self.default_model.clone())
             .part("file", file_part);
 
         let response = self
             .client
-            .post(&self.config.endpoint)
+            .post(&self.endpoint)
             .bearer_auth(&self.api_key)
             .multipart(form)
             .send()
             .await
-            .context("failed to call OpenAI transcription API")?
+            .context("failed to call transcription API")?
             .error_for_status()
-            .context("OpenAI transcription API returned an error status")?;
+            .context("transcription API returned an error status")?;
 
         let parsed: OpenAiTranscriptionResponse = response
             .json()
             .await
-            .context("failed to parse OpenAI transcription response")?;
+            .context("failed to parse transcription response")?;
 
         Ok(parsed.text.trim().to_string())
     }
 
     fn name(&self) -> &'static str {
-        "OpenAI Whisper"
+        "STT Provider"
     }
 }

@@ -12,6 +12,7 @@ pub struct GlideConfig {
     pub app: AppConfig,
     pub hotkey: HotkeyConfig,
     pub audio: AudioConfig,
+    pub providers: ProvidersConfig,
     pub stt: SttConfig,
     pub llm: LlmConfig,
     pub overlay: OverlayConfig,
@@ -24,6 +25,7 @@ impl Default for GlideConfig {
             app: AppConfig::default(),
             hotkey: HotkeyConfig::default(),
             audio: AudioConfig::default(),
+            providers: ProvidersConfig::default(),
             stt: SttConfig::default(),
             llm: LlmConfig::default(),
             overlay: OverlayConfig::default(),
@@ -335,84 +337,137 @@ impl Default for AudioConfig {
     }
 }
 
+// --- Unified provider system ---
+
+/// A provider that can serve STT, LLM, or both.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Provider {
+    OpenAi,
+    Groq,
+}
+
+impl Provider {
+    #[allow(dead_code)]
+    pub const ALL: [Self; 2] = [Self::OpenAi, Self::Groq];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OpenAi => "OpenAI",
+            Self::Groq => "Groq",
+        }
+    }
+
+    pub fn logo(self) -> &'static str {
+        match self {
+            Self::OpenAi => "assets/icons/openai.png",
+            Self::Groq => "assets/icons/groq.png",
+        }
+    }
+
+    pub fn default_base_url(self) -> &'static str {
+        match self {
+            Self::OpenAi => "https://api.openai.com/v1",
+            Self::Groq => "https://api.groq.com/openai/v1",
+        }
+    }
+
+    pub fn stt_endpoint(self, base: &str) -> String {
+        format!("{}/audio/transcriptions", base.trim_end_matches('/'))
+    }
+
+    pub fn llm_endpoint(self, base: &str) -> String {
+        format!("{}/chat/completions", base.trim_end_matches('/'))
+    }
+}
+
+/// Unified provider credentials — one entry per provider, shared across STT and LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProvidersConfig {
+    pub openai: ProviderCredentials,
+    pub groq: ProviderCredentials,
+}
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            openai: ProviderCredentials {
+                api_key: String::new(),
+                base_url: Provider::OpenAi.default_base_url().to_string(),
+            },
+            groq: ProviderCredentials {
+                api_key: String::new(),
+                base_url: Provider::Groq.default_base_url().to_string(),
+            },
+        }
+    }
+}
+
+impl ProvidersConfig {
+    pub fn credentials_for(&self, provider: Provider) -> &ProviderCredentials {
+        match provider {
+            Provider::OpenAi => &self.openai,
+            Provider::Groq => &self.groq,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn credentials_for_mut(&mut self, provider: Provider) -> &mut ProviderCredentials {
+        match provider {
+            Provider::OpenAi => &mut self.openai,
+            Provider::Groq => &mut self.groq,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProviderCredentials {
+    pub api_key: String,
+    pub base_url: String,
+}
+
+impl Default for ProviderCredentials {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: String::new(),
+        }
+    }
+}
+
+impl ProviderCredentials {
+    pub fn resolve_api_key(&self, label: &str) -> Result<String> {
+        if !self.api_key.trim().is_empty() {
+            return Ok(self.api_key.trim().to_string());
+        }
+        anyhow::bail!("missing {label} API key; set it in Glide settings")
+    }
+}
+
+// --- STT config (just provider selection, no credentials) ---
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SttConfig {
-    pub provider: SttProviderKind,
-    pub openai: OpenAiSttConfig,
+    pub provider: Provider,
 }
 
 impl Default for SttConfig {
     fn default() -> Self {
         Self {
-            provider: SttProviderKind::OpenAi,
-            openai: OpenAiSttConfig::default(),
+            provider: Provider::OpenAi,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SttProviderKind {
-    OpenAi,
-}
-
-impl SttProviderKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::OpenAi => "OpenAI Whisper",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct OpenAiSttConfig {
-    pub api_key: String,
-    pub api_key_env: String,
-    pub model: String,
-    pub endpoint: String,
-}
-
-impl Default for OpenAiSttConfig {
-    fn default() -> Self {
-        Self {
-            api_key: String::new(),
-            api_key_env: "OPENAI_API_KEY".to_string(),
-            model: "whisper-1".to_string(),
-            endpoint: "https://api.openai.com/v1/audio/transcriptions".to_string(),
-        }
-    }
-}
-
-impl OpenAiSttConfig {
-    pub fn resolve_api_key(&self) -> Result<String> {
-        if !self.api_key.trim().is_empty() {
-            return Ok(self.api_key.trim().to_string());
-        }
-
-        std::env::var(&self.api_key_env).with_context(|| {
-            format!(
-                "missing speech-to-text API key; set it in Glide settings or via {}",
-                self.api_key_env
-            )
-        })
-    }
-
-    pub fn credential_source(&self) -> &'static str {
-        if self.api_key.trim().is_empty() {
-            "environment variable"
-        } else {
-            "saved in config"
-        }
-    }
-}
+// --- LLM config (just provider selection + prompts, no credentials) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
     pub provider: LlmProviderKind,
-    pub openai: OpenAiLlmConfig,
     pub prompt: PromptConfig,
 }
 
@@ -420,7 +475,6 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             provider: LlmProviderKind::None,
-            openai: OpenAiLlmConfig::default(),
             prompt: PromptConfig::default(),
         }
     }
@@ -431,94 +485,214 @@ impl Default for LlmConfig {
 pub enum LlmProviderKind {
     None,
     OpenAi,
+    Groq,
 }
 
 impl LlmProviderKind {
-    pub const ALL: [Self; 2] = [Self::None, Self::OpenAi];
+    #[allow(dead_code)]
+    pub const ALL: [Self; 3] = [Self::None, Self::OpenAi, Self::Groq];
 
-    pub fn next(self) -> Self {
-        let index = Self::ALL
-            .iter()
-            .position(|candidate| *candidate == self)
-            .unwrap_or(0);
-        Self::ALL[(index + 1) % Self::ALL.len()]
+    #[allow(dead_code)]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "Disabled",
+            Self::OpenAi => "OpenAI",
+            Self::Groq => "Groq",
+        }
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct OpenAiLlmConfig {
-    pub api_key: String,
-    pub api_key_env: String,
-    pub model: String,
-    pub endpoint: String,
-}
-
-impl Default for OpenAiLlmConfig {
-    fn default() -> Self {
-        Self {
-            api_key: String::new(),
-            api_key_env: "OPENAI_API_KEY".to_string(),
-            model: "gpt-4o-mini".to_string(),
-            endpoint: "https://api.openai.com/v1/chat/completions".to_string(),
+    pub fn to_provider(self) -> Option<Provider> {
+        match self {
+            Self::None => None,
+            Self::OpenAi => Some(Provider::OpenAi),
+            Self::Groq => Some(Provider::Groq),
         }
     }
 }
 
-impl OpenAiLlmConfig {
-    pub fn resolve_api_key(&self) -> Result<String> {
-        if !self.api_key.trim().is_empty() {
-            return Ok(self.api_key.trim().to_string());
-        }
+// --- Model info for dropdowns ---
 
-        std::env::var(&self.api_key_env).with_context(|| {
-            format!(
-                "missing cleanup API key; set it in Glide settings or via {}",
-                self.api_key_env
-            )
-        })
-    }
+// --- Model fetching and caching ---
 
-    pub fn credential_source(&self) -> &'static str {
-        if self.api_key.trim().is_empty() {
-            "environment variable"
-        } else {
-            "saved in config"
-        }
+use std::sync::Mutex;
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ModelInfo {
+    pub id: String,
+    pub provider: String,
+    pub logo: String,
+}
+
+static CACHED_STT_MODELS: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
+static CACHED_LLM_MODELS: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
+
+fn fallback_stt_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo { id: "whisper-1".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
+        ModelInfo { id: "whisper-large-v3".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
+        ModelInfo { id: "whisper-large-v3-turbo".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
+    ]
+}
+
+fn fallback_llm_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo { id: "gpt-4o-mini".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
+        ModelInfo { id: "gpt-4o".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
+        ModelInfo { id: "gpt-4-turbo".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
+        ModelInfo { id: "llama-3.3-70b-versatile".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
+        ModelInfo { id: "llama-3.1-8b-instant".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
+        ModelInfo { id: "mixtral-8x7b-32768".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
+    ]
+}
+
+/// Get cached STT models. Falls back to hardcoded list if API fetch hasn't completed.
+pub fn cached_stt_models() -> Vec<ModelInfo> {
+    let cache = CACHED_STT_MODELS.get_or_init(|| Mutex::new(Vec::new()));
+    let locked = cache.lock().unwrap();
+    if locked.is_empty() {
+        fallback_stt_models()
+    } else {
+        locked.clone()
     }
 }
+
+/// Get cached LLM models. Falls back to hardcoded list if API fetch hasn't completed.
+pub fn cached_llm_models() -> Vec<ModelInfo> {
+    let cache = CACHED_LLM_MODELS.get_or_init(|| Mutex::new(Vec::new()));
+    let locked = cache.lock().unwrap();
+    if locked.is_empty() {
+        fallback_llm_models()
+    } else {
+        locked.clone()
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelsResponseEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct ModelsResponseEntry {
+    id: String,
+}
+
+/// Fetch model lists from all configured providers in a background thread.
+pub fn fetch_all_models(providers: &ProvidersConfig) {
+    let openai = providers.openai.clone();
+    let groq = providers.groq.clone();
+
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let mut stt = Vec::new();
+        let mut llm = Vec::new();
+
+        // Fetch from each provider
+        for (provider, creds) in [
+            (Provider::OpenAi, &openai),
+            (Provider::Groq, &groq),
+        ] {
+            if creds.api_key.trim().is_empty() || creds.base_url.trim().is_empty() {
+                continue;
+            }
+            let url = format!("{}/models", creds.base_url.trim_end_matches('/'));
+            let resp = client
+                .get(&url)
+                .bearer_auth(&creds.api_key)
+                .send()
+                .and_then(|r| r.json::<ModelsResponse>());
+
+            if let Ok(resp) = resp {
+                let logo = provider.logo().to_string();
+                let label = provider.label().to_string();
+                for entry in resp.data {
+                    let id = entry.id;
+                    let is_stt = id.contains("whisper");
+                    let info = ModelInfo {
+                        id: id.clone(),
+                        provider: label.clone(),
+                        logo: logo.clone(),
+                    };
+                    if is_stt {
+                        stt.push(info);
+                    } else {
+                        // Filter out embedding, tts, dall-e, and moderation models
+                        let dominated = id.contains("embedding")
+                            || id.contains("tts")
+                            || id.contains("dall-e")
+                            || id.contains("moderation")
+                            || id.contains("davinci")
+                            || id.contains("babbage");
+                        if !dominated {
+                            llm.push(info);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by provider then model id
+        stt.sort_by(|a, b| (&a.provider, &a.id).cmp(&(&b.provider, &b.id)));
+        llm.sort_by(|a, b| (&a.provider, &a.id).cmp(&(&b.provider, &b.id)));
+
+        if !stt.is_empty() {
+            let cache = CACHED_STT_MODELS.get_or_init(|| Mutex::new(Vec::new()));
+            *cache.lock().unwrap() = stt;
+        }
+        if !llm.is_empty() {
+            let cache = CACHED_LLM_MODELS.get_or_init(|| Mutex::new(Vec::new()));
+            *cache.lock().unwrap() = llm;
+        }
+    });
+}
+
+// --- Prompt / Style config ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PromptConfig {
+    pub default_stt_model: String,
+    pub default_llm_model: String,
     pub system: String,
     #[serde(alias = "app_overrides")]
     pub styles: Vec<Style>,
 }
 
-/// A dictation style with a name, assigned apps, and a custom system prompt.
+/// A dictation style with a name, assigned apps, a custom system prompt,
+/// and optional model overrides.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Style {
     pub name: String,
     #[serde(default)]
     pub apps: Vec<String>,
     pub prompt: String,
+    #[serde(default)]
+    pub stt_model: Option<String>,
+    #[serde(default)]
+    pub llm_model: Option<String>,
 }
 
 impl Default for PromptConfig {
     fn default() -> Self {
         Self {
+            default_stt_model: "whisper-1".to_string(),
+            default_llm_model: "gpt-4o-mini".to_string(),
             system: "You are a dictation assistant. Clean up the following raw speech transcript into well-formatted text. Fix grammar, punctuation, and filler words. Preserve the speaker's intent exactly.".to_string(),
             styles: vec![
                 Style {
                     name: "Professional".to_string(),
                     apps: vec![],
                     prompt: "You are a dictation assistant for professional communication. Clean up the transcript into clear, formal, well-structured text.".to_string(),
+                    stt_model: None,
+                    llm_model: None,
                 },
                 Style {
                     name: "Messaging".to_string(),
                     apps: vec![],
                     prompt: "You are a dictation assistant for casual messaging. Keep the tone informal and conversational. Fix obvious errors but preserve the casual voice.".to_string(),
+                    stt_model: None,
+                    llm_model: None,
                 },
             ],
         }
@@ -908,62 +1082,33 @@ mod tests {
     }
 
     #[test]
-    fn test_llm_provider_cycling() {
-        assert_eq!(LlmProviderKind::None.next(), LlmProviderKind::OpenAi);
-        assert_eq!(LlmProviderKind::OpenAi.next(), LlmProviderKind::None);
+    fn test_llm_provider_variants() {
+        assert_eq!(LlmProviderKind::ALL.len(), 3);
+        assert_eq!(LlmProviderKind::None.label(), "Disabled");
+        assert_eq!(LlmProviderKind::OpenAi.label(), "OpenAI");
+        assert_eq!(LlmProviderKind::Groq.label(), "Groq");
     }
 
     #[test]
-    fn test_credential_source_env_when_empty() {
-        let stt = OpenAiSttConfig::default();
-        assert_eq!(stt.credential_source(), "environment variable");
-
-        let llm = OpenAiLlmConfig::default();
-        assert_eq!(llm.credential_source(), "environment variable");
+    fn test_provider_variants() {
+        assert_eq!(Provider::ALL.len(), 2);
+        assert_eq!(Provider::OpenAi.label(), "OpenAI");
+        assert_eq!(Provider::Groq.label(), "Groq");
+        assert!(!Provider::OpenAi.default_base_url().is_empty());
     }
 
     #[test]
-    fn test_credential_source_config_when_set() {
-        let mut stt = OpenAiSttConfig::default();
-        stt.api_key = "sk-test".to_string();
-        assert_eq!(stt.credential_source(), "saved in config");
+    fn test_resolve_api_key_from_credentials() {
+        let mut creds = ProviderCredentials::default();
+        creds.api_key = "direct-key".to_string();
 
-        let mut llm = OpenAiLlmConfig::default();
-        llm.api_key = "sk-test".to_string();
-        assert_eq!(llm.credential_source(), "saved in config");
-    }
-
-    #[test]
-    fn test_resolve_api_key_from_env() {
-        let unique_var = "GLIDE_TEST_API_KEY_RESOLVE";
-        // Safety: single-threaded test, no other threads reading this var
-        unsafe { std::env::set_var(unique_var, "test-key-123") };
-
-        let mut stt = OpenAiSttConfig::default();
-        stt.api_key_env = unique_var.to_string();
-        stt.api_key = String::new();
-
-        let resolved = stt.resolve_api_key().unwrap();
-        assert_eq!(resolved, "test-key-123");
-
-        unsafe { std::env::remove_var(unique_var) };
-    }
-
-    #[test]
-    fn test_resolve_api_key_prefers_config() {
-        let mut stt = OpenAiSttConfig::default();
-        stt.api_key = "direct-key".to_string();
-
-        let resolved = stt.resolve_api_key().unwrap();
+        let resolved = creds.resolve_api_key("test").unwrap();
         assert_eq!(resolved, "direct-key");
     }
 
     #[test]
     fn test_resolve_api_key_fails_when_missing() {
-        let mut stt = OpenAiSttConfig::default();
-        stt.api_key = String::new();
-        stt.api_key_env = "GLIDE_NONEXISTENT_VAR_12345".to_string();
-
-        assert!(stt.resolve_api_key().is_err());
+        let creds = ProviderCredentials::default();
+        assert!(creds.resolve_api_key("test").is_err());
     }
 }

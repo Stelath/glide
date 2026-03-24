@@ -18,7 +18,7 @@ hound = "3"
 spectrum-analyzer = "1"
 
 # HTTP client for STT and LLM API calls
-reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "blocking"] }
 
 # Clipboard and simulated paste
 arboard = "3"

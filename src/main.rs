@@ -28,6 +28,9 @@ fn main() {
     // Pre-extract app icons in background so the picker popover opens instantly
     crate::config::preload_app_icons();
 
+    // Fetch available models from provider APIs in background
+    crate::config::fetch_all_models(&shared.snapshot().config.providers);
+
     let app = Application::new().with_assets(gpui_component_assets::Assets);
     app.run(move |cx| {
         gpui_component::init(cx);

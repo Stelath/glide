@@ -2,25 +2,31 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{GlideConfig, OpenAiLlmConfig, PromptConfig};
+use crate::config::{GlideConfig, PromptConfig};
 
 use super::CleanupContext;
 
 pub struct OpenAiLlmProvider {
     client: Client,
-    config: OpenAiLlmConfig,
+    endpoint: String,
     prompt: PromptConfig,
     api_key: String,
 }
 
 impl OpenAiLlmProvider {
     pub fn new(config: GlideConfig) -> Result<Self> {
-        let provider_config = config.llm.openai.clone();
-        let api_key = provider_config.resolve_api_key()?;
+        let provider = config
+            .llm
+            .provider
+            .to_provider()
+            .context("LLM provider is disabled")?;
+        let creds = config.providers.credentials_for(provider);
+        let api_key = creds.resolve_api_key("LLM")?;
+        let endpoint = provider.llm_endpoint(&creds.base_url);
 
         Ok(Self {
             client: Client::new(),
-            config: provider_config,
+            endpoint,
             prompt: config.llm.prompt.clone(),
             api_key,
         })
@@ -54,20 +60,23 @@ impl super::LlmProvider for OpenAiLlmProvider {
     async fn clean(&self, raw_text: &str, context: &CleanupContext) -> Result<String> {
         let user_prompt = build_user_prompt(raw_text, context);
 
-        // Use the style's prompt if the target app matches, otherwise default
-        let system_prompt = if let Some(target) = &context.target_app {
-            self.prompt
-                .styles
-                .iter()
-                .find(|s| s.apps.iter().any(|a| a.eq_ignore_ascii_case(target)))
-                .map(|s| s.prompt.as_str())
-                .unwrap_or(&self.prompt.system)
-        } else {
-            &self.prompt.system
-        };
+        // Find matching style for target app
+        let matched_style = context.target_app.as_ref().and_then(|target| {
+            self.prompt.styles.iter().find(|s| {
+                s.apps.iter().any(|a| a.eq_ignore_ascii_case(target))
+            })
+        });
+
+        let system_prompt = matched_style
+            .map(|s| s.prompt.as_str())
+            .unwrap_or(&self.prompt.system);
+
+        let model = matched_style
+            .and_then(|s| s.llm_model.as_deref())
+            .unwrap_or(&self.prompt.default_llm_model);
 
         let request = ChatCompletionRequest {
-            model: self.config.model.clone(),
+            model: model.to_string(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
@@ -82,7 +91,7 @@ impl super::LlmProvider for OpenAiLlmProvider {
 
         let response = self
             .client
-            .post(&self.config.endpoint)
+            .post(&self.endpoint)
             .bearer_auth(&self.api_key)
             .json(&request)
             .send()

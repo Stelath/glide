@@ -19,6 +19,9 @@ pub trait LlmProvider: Send + Sync {
 pub fn build_provider(config: &GlideConfig) -> Result<Option<Box<dyn LlmProvider>>> {
     match config.llm.provider {
         LlmProviderKind::None => Ok(None),
-        LlmProviderKind::OpenAi => Ok(Some(Box::new(openai::OpenAiLlmProvider::new(config.clone())?))),
+        // Both OpenAI and Groq use the OpenAI-compatible API format
+        LlmProviderKind::OpenAi | LlmProviderKind::Groq => {
+            Ok(Some(Box::new(openai::OpenAiLlmProvider::new(config.clone())?)))
+        }
     }
 }

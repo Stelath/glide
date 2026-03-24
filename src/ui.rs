@@ -15,7 +15,7 @@ use gpui_component::ActiveTheme;
 use gpui_component::Side;
 
 use crate::app::{AppSnapshot, SharedState};
-use crate::config::{GlideConfig, HotkeyTrigger, LlmProviderKind, OverlayStyle, Style, ThemePreference};
+use crate::config::{GlideConfig, HotkeyTrigger, OverlayStyle, Provider, Style, ThemePreference};
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(800);
 
@@ -35,11 +35,16 @@ pub fn apply_theme_preference(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsPane {
-    Models,
+    Providers,
     Styles,
     General,
 }
 
+
+struct ProviderInputs {
+    api_key: Entity<InputState>,
+    base_url: Entity<InputState>,
+}
 
 struct StyleInputs {
     name: Entity<InputState>,
@@ -55,15 +60,10 @@ pub struct SettingsApp {
     recording_hotkey: bool,
     hotkey_focus: FocusHandle,
 
-    stt_api_key: Entity<InputState>,
-    stt_env_fallback: Entity<InputState>,
-    stt_model: Entity<InputState>,
-    stt_endpoint: Entity<InputState>,
-
-    llm_api_key: Entity<InputState>,
-    llm_env_fallback: Entity<InputState>,
-    llm_model: Entity<InputState>,
-    llm_endpoint: Entity<InputState>,
+    openai_inputs: ProviderInputs,
+    groq_inputs: ProviderInputs,
+    expanded_provider: Option<usize>,
+    expanded_style: Option<usize>,
 
     default_prompt: Entity<InputState>,
     styles: Vec<StyleInputs>,
@@ -80,34 +80,21 @@ impl SettingsApp {
     ) -> Self {
         let config = shared.snapshot().config;
 
-        let stt_api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .default_value(&config.stt.openai.api_key)
+        // Create per-provider input state
+        let openai_creds = &config.providers.openai;
+        let openai_api_key = cx.new(|cx| {
+            InputState::new(window, cx).masked(true).default_value(&openai_creds.api_key)
         });
-        let stt_env_fallback = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&config.stt.openai.api_key_env)
-        });
-        let stt_model = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&config.stt.openai.model)
-        });
-        let stt_endpoint = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&config.stt.openai.endpoint)
+        let openai_base_url = cx.new(|cx| {
+            InputState::new(window, cx).default_value(&openai_creds.base_url)
         });
 
-        let llm_api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .default_value(&config.llm.openai.api_key)
+        let groq_creds = &config.providers.groq;
+        let groq_api_key = cx.new(|cx| {
+            InputState::new(window, cx).masked(true).default_value(&groq_creds.api_key)
         });
-        let llm_env_fallback = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&config.llm.openai.api_key_env)
-        });
-        let llm_model = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&config.llm.openai.model)
-        });
-        let llm_endpoint = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&config.llm.openai.endpoint)
+        let groq_base_url = cx.new(|cx| {
+            InputState::new(window, cx).default_value(&groq_creds.base_url)
         });
 
         let default_prompt = cx.new(|cx| {
@@ -117,14 +104,10 @@ impl SettingsApp {
         });
 
         let mut subs = vec![
-            cx.subscribe_in(&stt_api_key, window, Self::on_input_change),
-            cx.subscribe_in(&stt_env_fallback, window, Self::on_input_change),
-            cx.subscribe_in(&stt_model, window, Self::on_input_change),
-            cx.subscribe_in(&stt_endpoint, window, Self::on_input_change),
-            cx.subscribe_in(&llm_api_key, window, Self::on_input_change),
-            cx.subscribe_in(&llm_env_fallback, window, Self::on_input_change),
-            cx.subscribe_in(&llm_model, window, Self::on_input_change),
-            cx.subscribe_in(&llm_endpoint, window, Self::on_input_change),
+            cx.subscribe_in(&openai_api_key, window, Self::on_input_change),
+            cx.subscribe_in(&openai_base_url, window, Self::on_input_change),
+            cx.subscribe_in(&groq_api_key, window, Self::on_input_change),
+            cx.subscribe_in(&groq_base_url, window, Self::on_input_change),
             cx.subscribe_in(&default_prompt, window, Self::on_input_change),
         ];
 
@@ -150,18 +133,20 @@ impl SettingsApp {
 
         Self {
             shared,
-            active_pane: SettingsPane::Models,
+            active_pane: SettingsPane::General,
             sidebar_collapsed: false,
             recording_hotkey: false,
             hotkey_focus: cx.focus_handle(),
-            stt_api_key,
-            stt_env_fallback,
-            stt_model,
-            stt_endpoint,
-            llm_api_key,
-            llm_env_fallback,
-            llm_model,
-            llm_endpoint,
+            openai_inputs: ProviderInputs {
+                api_key: openai_api_key,
+                base_url: openai_base_url,
+            },
+            groq_inputs: ProviderInputs {
+                api_key: groq_api_key,
+                base_url: groq_base_url,
+            },
+            expanded_provider: Some(0),
+            expanded_style: Some(0),
             default_prompt,
             styles,
             save_pending: false,
@@ -233,15 +218,15 @@ impl SettingsApp {
     fn draft_from_inputs(&self, cx: &gpui::Context<Self>) -> GlideConfig {
         let mut config = self.shared.snapshot().config;
 
-        config.stt.openai.api_key = self.stt_api_key.read(cx).value().to_string();
-        config.stt.openai.api_key_env = self.stt_env_fallback.read(cx).value().to_string();
-        config.stt.openai.model = self.stt_model.read(cx).value().to_string();
-        config.stt.openai.endpoint = self.stt_endpoint.read(cx).value().to_string();
-
-        config.llm.openai.api_key = self.llm_api_key.read(cx).value().to_string();
-        config.llm.openai.api_key_env = self.llm_env_fallback.read(cx).value().to_string();
-        config.llm.openai.model = self.llm_model.read(cx).value().to_string();
-        config.llm.openai.endpoint = self.llm_endpoint.read(cx).value().to_string();
+        // Save per-provider credentials
+        config.providers.openai.api_key =
+            self.openai_inputs.api_key.read(cx).value().to_string();
+        config.providers.openai.base_url =
+            self.openai_inputs.base_url.read(cx).value().to_string();
+        config.providers.groq.api_key =
+            self.groq_inputs.api_key.read(cx).value().to_string();
+        config.providers.groq.base_url =
+            self.groq_inputs.base_url.read(cx).value().to_string();
 
         config.llm.prompt.system = self.default_prompt.read(cx).value().to_string();
 
@@ -252,6 +237,8 @@ impl SettingsApp {
                 name: s.name.read(cx).value().to_string(),
                 apps: s.apps.clone(),
                 prompt: s.prompt.read(cx).value().to_string(),
+                stt_model: None,
+                llm_model: None,
             })
             .collect();
 
@@ -270,11 +257,11 @@ impl SettingsApp {
             .child(
                 SidebarMenu::new()
                     .child(
-                        SidebarMenuItem::new("Models")
-                            .icon(Icon::new(IconName::Settings2))
-                            .active(self.active_pane == SettingsPane::Models)
+                        SidebarMenuItem::new("General")
+                            .icon(Icon::new(IconName::Settings))
+                            .active(self.active_pane == SettingsPane::General)
                             .on_click(cx.listener(|this, _, _window, cx| {
-                                this.active_pane = SettingsPane::Models;
+                                this.active_pane = SettingsPane::General;
                                 cx.notify();
                             })),
                     )
@@ -288,11 +275,11 @@ impl SettingsApp {
                             })),
                     )
                     .child(
-                        SidebarMenuItem::new("General")
-                            .icon(Icon::new(IconName::Settings))
-                            .active(self.active_pane == SettingsPane::General)
+                        SidebarMenuItem::new("Providers")
+                            .icon(Icon::new(IconName::Globe))
+                            .active(self.active_pane == SettingsPane::Providers)
                             .on_click(cx.listener(|this, _, _window, cx| {
-                                this.active_pane = SettingsPane::General;
+                                this.active_pane = SettingsPane::Providers;
                                 cx.notify();
                             })),
                     ),
@@ -315,8 +302,8 @@ impl SettingsApp {
             .overflow_y_scroll()
             .bg(cx.theme().background)
             .child(match self.active_pane {
-                SettingsPane::Models => {
-                    self.render_models_pane(window, cx, &snapshot).into_any_element()
+                SettingsPane::Providers => {
+                    self.render_providers_pane(window, cx, &snapshot).into_any_element()
                 }
                 SettingsPane::Styles => {
                     self.render_styles_pane(window, cx).into_any_element()
@@ -327,82 +314,105 @@ impl SettingsApp {
             })
     }
 
-    fn render_models_pane(
+    fn render_providers_pane(
         &self,
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
-        snapshot: &AppSnapshot,
+        _snapshot: &AppSnapshot,
     ) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                card(cx)
-                    .child(section_heading("Speech To Text", cx))
-                    .child(read_only_row(
-                        "Provider",
-                        snapshot.config.stt.provider.label(),
-                        cx,
-                    ))
-                    .child(field_label("API Key", cx))
-                    .child(Input::new(&self.stt_api_key).mask_toggle().cleanable(true))
-                    .child(field_label("Env Fallback", cx))
-                    .child(Input::new(&self.stt_env_fallback))
-                    .child(field_label("Model", cx))
-                    .child(Input::new(&self.stt_model))
-                    .child(field_label("Endpoint", cx))
-                    .child(Input::new(&self.stt_endpoint))
-                    .child(hint_row(
-                        &format!(
-                            "Credential source: {}",
-                            snapshot.config.stt.openai.credential_source()
-                        ),
-                        cx,
-                    )),
-            )
-            .child(
-                card(cx)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(section_heading("Text Cleanup (LLM)", cx))
-                            .child({
-                                let label = match snapshot.config.llm.provider {
-                                    LlmProviderKind::None => "Disabled",
-                                    LlmProviderKind::OpenAi => "OpenAI GPT",
-                                };
-                                Button::new("toggle-llm")
-                                    .label(label)
-                                    .primary()
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        let current =
-                                            this.shared.snapshot().config.llm.provider;
-                                        let _ = this.shared.update_config(|config| {
-                                            config.llm.provider = current.next();
-                                        });
-                                        cx.notify();
-                                    }))
-                            }),
+        let mut container = div().flex().flex_col().gap_2();
+
+        let providers: [(Provider, &ProviderInputs); 2] = [
+            (Provider::OpenAi, &self.openai_inputs),
+            (Provider::Groq, &self.groq_inputs),
+        ];
+
+        for (idx, (provider, inputs)) in providers.iter().enumerate() {
+            let is_expanded = self.expanded_provider == Some(idx);
+            let logo_path = std::env::current_dir()
+                .ok()
+                .map(|d| d.join(provider.logo()));
+
+            // Accordion header
+            let chevron = if is_expanded { "▼" } else { "▶" };
+            let header = div()
+                .id(SharedString::from(format!("provider-header-{idx}")))
+                .flex()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_3()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().secondary)
+                .cursor_pointer()
+                .hover(|s| s.bg(cx.theme().accent.opacity(0.1)))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(chevron),
+                )
+                .when_some(logo_path.clone(), |this, path| {
+                    this.child(
+                        img(path)
+                            .w(gpui::px(24.0))
+                            .h(gpui::px(24.0))
+                            .rounded_md(),
                     )
-                    .child(field_label("API Key", cx))
-                    .child(Input::new(&self.llm_api_key).mask_toggle().cleanable(true))
-                    .child(field_label("Env Fallback", cx))
-                    .child(Input::new(&self.llm_env_fallback))
-                    .child(field_label("Model", cx))
-                    .child(Input::new(&self.llm_model))
-                    .child(field_label("Endpoint", cx))
-                    .child(Input::new(&self.llm_endpoint))
-                    .child(hint_row(
-                        &format!(
-                            "Credential source: {}",
-                            snapshot.config.llm.openai.credential_source()
-                        ),
-                        cx,
-                    )),
-            )
+                })
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(cx.theme().foreground)
+                        .child(provider.label()),
+                )
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.expanded_provider = if this.expanded_provider == Some(idx) {
+                        None
+                    } else {
+                        Some(idx)
+                    };
+                    cx.notify();
+                }));
+
+            // Accordion body
+            let body = if is_expanded {
+                Some(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .px_4()
+                        .py_3()
+                        .ml_4()
+                        .border_l_2()
+                        .border_color(cx.theme().border)
+                        .child(field_label("API Key", cx))
+                        .child(
+                            Input::new(&inputs.api_key)
+                                .mask_toggle()
+                                .cleanable(true),
+                        )
+                        .child(field_label("Base URL", cx))
+                        .child(Input::new(&inputs.base_url)),
+                )
+            } else {
+                None
+            };
+
+            container = container.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .when_some(body, |this, body| this.child(body)),
+            );
+        }
+
+        container
     }
 
     fn render_styles_pane(
@@ -413,292 +423,306 @@ impl SettingsApp {
         let available_apps = crate::config::list_applications();
         let mut container = div().flex().flex_col().gap_4();
 
-        // -- Default Prompt ------------------------------------------------
+        // -- Default Prompt & Models -------------------------------------------
+        let snapshot = self.shared.snapshot();
+        let default_stt = snapshot.config.llm.prompt.default_stt_model.clone();
+        let default_llm = snapshot.config.llm.prompt.default_llm_model.clone();
+        let stt_models = crate::config::cached_stt_models();
+        let llm_models = crate::config::cached_llm_models();
+
+        let shared_stt = self.shared.clone();
+        let shared_llm = self.shared.clone();
+
         container = container.child(
-            section_block("Default Prompt", cx)
+            section_block("Defaults", cx)
                 .child(
                     settings_card(cx)
                         .child(hint_row(
                             "Used for all applications unless a style overrides it.",
                             cx,
                         ))
-                        .child(Input::new(&self.default_prompt)),
+                        .child(field_label("System Prompt", cx))
+                        .child(Input::new(&self.default_prompt))
+                        .child(
+                            setting_row("Voice Model", "Default speech-to-text model", cx)
+                                .child(
+                                    model_dropdown_button(
+                                        "default-stt",
+                                        &default_stt,
+                                        &stt_models,
+                                        shared_stt,
+                                        |config, model| {
+                                            config.llm.prompt.default_stt_model = model;
+                                        },
+                                    ),
+                                ),
+                        )
+                        .child(
+                            setting_row("LLM Model", "Default text cleanup model", cx)
+                                .child(
+                                    model_dropdown_button(
+                                        "default-llm",
+                                        &default_llm,
+                                        &llm_models,
+                                        shared_llm,
+                                        |config, model| {
+                                            config.llm.prompt.default_llm_model = model;
+                                        },
+                                    ),
+                                ),
+                        ),
                 ),
         );
 
-        // -- Styles --------------------------------------------------------
+        // -- Styles (accordion cards) -----------------------------------------
         for (index, style) in self.styles.iter().enumerate() {
             let style_name = style.name.read(cx).value().to_string();
             let display_name = if style_name.is_empty() {
                 format!("Style #{}", index + 1)
             } else {
-                style_name
+                style_name.clone()
             };
+            let is_expanded = self.expanded_style == Some(index);
 
-            // App icons row — show first 5, then "+N" overflow
-            let apps = &style.apps;
-            let max_shown = 5;
-            let mut app_row = div().flex().items_center().gap_1().flex_wrap();
-            for (ai, app) in apps.iter().take(max_shown).enumerate() {
-                let app_clone = app.clone();
-                let icon_element = if let Some(icon_path) =
-                    crate::config::app_icon_path(app)
-                {
-                    img(icon_path)
-                        .w(gpui::px(20.0))
-                        .h(gpui::px(20.0))
-                        .rounded_sm()
-                        .into_any_element()
-                } else {
-                    let first = app.chars().next().unwrap_or('?').to_uppercase().to_string();
+            // --- Accordion header ---
+            let chevron = if is_expanded { "▼" } else { "▶" };
+            let header = div()
+                .id(SharedString::from(format!("style-header-{index}")))
+                .flex()
+                .items_center()
+                .justify_between()
+                .px_4()
+                .py_3()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().secondary)
+                .cursor_pointer()
+                .hover(|s| s.bg(cx.theme().accent.opacity(0.1)))
+                .child(
                     div()
                         .flex()
                         .items_center()
-                        .justify_center()
-                        .w(gpui::px(20.0))
-                        .h(gpui::px(20.0))
-                        .rounded_sm()
-                        .bg(cx.theme().accent.opacity(0.2))
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(cx.theme().accent_foreground)
-                        .child(first)
-                        .into_any_element()
-                };
-                app_row = app_row.child(
-                    div()
-                        .id(SharedString::from(format!("app-{index}-{ai}")))
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(cx.theme().secondary)
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .text_xs()
-                        .child(icon_element)
+                        .gap_2()
                         .child(
                             div()
-                                .text_color(cx.theme().foreground)
-                                .child(app.clone()),
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(chevron),
                         )
                         .child(
-                            Button::new(SharedString::from(format!("rm-app-{index}-{ai}")))
-                                .label("×")
-                                .ghost()
-                                .xsmall()
-                                .compact()
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.styles[index]
-                                        .apps
-                                        .retain(|a| a != &app_clone);
-                                    this.schedule_autosave(cx);
-                                    cx.notify();
-                                })),
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(cx.theme().foreground)
+                                .child(display_name),
                         ),
-                );
-            }
-            if apps.len() > max_shown {
-                app_row = app_row.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(format!("+{}", apps.len() - max_shown)),
-                );
-            }
-
-            // "+ Add App" button with popover grid picker
-            let apps_for_filter = apps.clone();
-            let popover_apps: Vec<String> = available_apps
-                .iter()
-                .filter(|a| !apps_for_filter.contains(a))
-                .cloned()
-                .collect();
-
-            let entity_for_apps = cx.weak_entity();
-            let search_entity = style.search.clone();
-            let popover_id = SharedString::from(format!("app-picker-{index}"));
-            let add_app_popover = Popover::new(popover_id)
-                .trigger(
-                    Button::new(SharedString::from(format!("add-app-{index}")))
-                        .label("+ Add App")
+                )
+                .child(
+                    Button::new(SharedString::from(format!("remove-style-{index}")))
+                        .label("×")
                         .ghost()
                         .small()
-                        .compact(),
+                        .compact()
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.styles.remove(index);
+                            if this.expanded_style == Some(index) {
+                                this.expanded_style = None;
+                            }
+                            this.schedule_autosave(cx);
+                            cx.notify();
+                        })),
                 )
-                .content(move |_state, _window, cx| {
-                    let query = search_entity.read(cx).value().to_string();
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.expanded_style = if this.expanded_style == Some(index) {
+                        None
+                    } else {
+                        Some(index)
+                    };
+                    cx.notify();
+                }));
 
-                    // Fuzzy filter and sort
-                    let mut scored: Vec<(&String, i32)> = popover_apps
-                        .iter()
-                        .filter_map(|a| {
-                            crate::config::fuzzy_match(&query, a).map(|s| (a, s))
-                        })
-                        .collect();
-                    scored.sort_by(|a, b| b.1.cmp(&a.1));
+            // --- Accordion body (only when expanded) ---
+            let body = if is_expanded {
+                // App icons row
+                let apps = &style.apps;
+                let max_shown = 5;
+                let mut app_row = div().flex().items_center().gap_1().flex_wrap();
+                for (ai, app) in apps.iter().take(max_shown).enumerate() {
+                    let app_clone = app.clone();
+                    let icon_el = if let Some(icon_path) = crate::config::app_icon_path(app) {
+                        img(icon_path).w(gpui::px(20.0)).h(gpui::px(20.0)).rounded_sm().into_any_element()
+                    } else {
+                        let ch = app.chars().next().unwrap_or('?').to_uppercase().to_string();
+                        div().flex().items_center().justify_center()
+                            .w(gpui::px(20.0)).h(gpui::px(20.0)).rounded_sm()
+                            .bg(cx.theme().accent.opacity(0.2)).text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(cx.theme().accent_foreground)
+                            .child(ch).into_any_element()
+                    };
+                    app_row = app_row.child(
+                        div().id(SharedString::from(format!("app-{index}-{ai}")))
+                            .flex().items_center().gap_1().px_2().py_0p5()
+                            .rounded_md().bg(cx.theme().secondary)
+                            .border_1().border_color(cx.theme().border).text_xs()
+                            .child(icon_el)
+                            .child(div().text_color(cx.theme().foreground).child(app.clone()))
+                            .child(
+                                Button::new(SharedString::from(format!("rm-app-{index}-{ai}")))
+                                    .label("×").ghost().xsmall().compact()
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.styles[index].apps.retain(|a| a != &app_clone);
+                                        this.schedule_autosave(cx);
+                                        cx.notify();
+                                    })),
+                            ),
+                    );
+                }
+                if apps.len() > max_shown {
+                    app_row = app_row.child(
+                        div().text_xs().text_color(cx.theme().muted_foreground)
+                            .child(format!("+{}", apps.len() - max_shown)),
+                    );
+                }
 
-                    let mut grid = div().flex().flex_wrap().gap_2().p_2();
-                    for (app, _score) in &scored {
-                        let app_name = (*app).clone();
-                        let entity = entity_for_apps.clone();
+                // App picker popover
+                let apps_for_filter = apps.clone();
+                let popover_apps: Vec<String> = available_apps.iter()
+                    .filter(|a| !apps_for_filter.contains(a)).cloned().collect();
+                let entity_for_apps = cx.weak_entity();
+                let search_entity = style.search.clone();
+                let add_app_popover = Popover::new(SharedString::from(format!("app-picker-{index}")))
+                    .trigger(
+                        Button::new(SharedString::from(format!("add-app-{index}")))
+                            .label("+ Add App").ghost().small().compact(),
+                    )
+                    .content(move |_state, _window, cx| {
+                        let query = search_entity.read(cx).value().to_string();
+                        let mut scored: Vec<(&String, i32)> = popover_apps.iter()
+                            .filter_map(|a| crate::config::fuzzy_match(&query, a).map(|s| (a, s)))
+                            .collect();
+                        scored.sort_by(|a, b| b.1.cmp(&a.1));
+                        let mut grid = div().flex().flex_wrap().gap_2().p_2();
+                        for (app, _) in &scored {
+                            let app_name = (*app).clone();
+                            let entity = entity_for_apps.clone();
+                            let tile_icon = if let Some(p) = crate::config::app_icon_path(app) {
+                                img(p).w(gpui::px(40.0)).h(gpui::px(40.0)).rounded_lg().into_any_element()
+                            } else {
+                                let ch = app.chars().next().unwrap_or('?').to_uppercase().to_string();
+                                div().flex().items_center().justify_center()
+                                    .w(gpui::px(40.0)).h(gpui::px(40.0)).rounded_lg()
+                                    .bg(cx.theme().accent.opacity(0.2)).text_lg()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(cx.theme().accent_foreground)
+                                    .child(ch).into_any_element()
+                            };
+                            grid = grid.child(
+                                div().id(SharedString::from(format!("pick-{app_name}")))
+                                    .flex().flex_col().items_center().gap_1()
+                                    .w(gpui::px(80.0)).py_2().rounded_md().cursor_pointer()
+                                    .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
+                                    .child(tile_icon)
+                                    .child(div().text_xs().text_color(cx.theme().foreground)
+                                        .overflow_x_hidden().max_w(gpui::px(76.0))
+                                        .child(app_name.clone()))
+                                    .on_click(move |_, _, cx| {
+                                        let name = app_name.clone();
+                                        let _ = entity.update(cx, |this, cx| {
+                                            if !this.styles[index].apps.contains(&name) {
+                                                this.styles[index].apps.push(name);
+                                                this.schedule_autosave(cx);
+                                                cx.notify();
+                                            }
+                                        });
+                                    }),
+                            );
+                        }
+                        div().w(gpui::px(380.0)).max_h(gpui::px(400.0))
+                            .flex().flex_col().overflow_hidden()
+                            .child(div().p_2().border_b_1().border_color(cx.theme().border)
+                                .child(Input::new(&search_entity)))
+                            .child(div().id(SharedString::from(format!("app-grid-scroll-{index}")))
+                                .flex_1().overflow_y_scrollbar().child(grid))
+                            .into_any_element()
+                    });
 
-                        // Real app icon or fallback
-                        let tile_icon = if let Some(icon_path) =
-                            crate::config::app_icon_path(app)
-                        {
-                            img(icon_path)
-                                .w(gpui::px(40.0))
-                                .h(gpui::px(40.0))
-                                .rounded_lg()
-                                .into_any_element()
-                        } else {
-                            let first = app
-                                .chars()
-                                .next()
-                                .unwrap_or('?')
-                                .to_uppercase()
-                                .to_string();
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .w(gpui::px(40.0))
-                                .h(gpui::px(40.0))
-                                .rounded_lg()
-                                .bg(cx.theme().accent.opacity(0.2))
-                                .text_lg()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(cx.theme().accent_foreground)
-                                .child(first)
-                                .into_any_element()
-                        };
+                // Style name input (editable)
+                let name_input = Input::new(&style.name).appearance(false);
 
-                        grid = grid.child(
-                            div()
-                                .id(SharedString::from(format!("pick-{app_name}")))
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap_1()
-                                .w(gpui::px(80.0))
-                                .py_2()
-                                .rounded_md()
-                                .cursor_pointer()
-                                .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
-                                .child(tile_icon)
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().foreground)
-                                        .overflow_x_hidden()
-                                        .max_w(gpui::px(76.0))
-                                        .child(app_name.clone()),
-                                )
-                                .on_click(move |_, _, cx| {
-                                    let name = app_name.clone();
-                                    let _ = entity.update(cx, |this, cx| {
-                                        if !this.styles[index].apps.contains(&name) {
-                                            this.styles[index].apps.push(name);
-                                            this.schedule_autosave(cx);
-                                            cx.notify();
-                                        }
-                                    });
-                                }),
-                        );
-                    }
+                // Per-style model overrides
+                let cfg_styles = &snapshot.config.llm.prompt.styles;
+                let has_stt = cfg_styles.get(index).and_then(|s| s.stt_model.as_ref()).is_some();
+                let has_llm = cfg_styles.get(index).and_then(|s| s.llm_model.as_ref()).is_some();
+                let stt_display = if has_stt {
+                    cfg_styles[index].stt_model.clone().unwrap()
+                } else {
+                    format!("Default ({})", default_stt)
+                };
+                let llm_display = if has_llm {
+                    cfg_styles[index].llm_model.clone().unwrap()
+                } else {
+                    format!("Default ({})", default_llm)
+                };
 
+                Some(
                     div()
-                        .w(gpui::px(380.0))
-                        .max_h(gpui::px(400.0))
                         .flex()
                         .flex_col()
-                        .overflow_hidden()
+                        .gap_3()
+                        .px_4()
+                        .py_3()
+                        .ml_4()
+                        .border_l_2()
+                        .border_color(cx.theme().border)
+                        // Style name
+                        .child(name_input)
+                        // Apps
+                        .child(
+                            div().flex().items_center().gap_2()
+                                .child(app_row)
+                                .child(add_app_popover),
+                        )
+                        // System prompt
+                        .child(Input::new(&style.prompt))
+                        // Model selectors side by side
                         .child(
                             div()
-                                .p_2()
-                                .border_b_1()
-                                .border_color(cx.theme().border)
+                                .flex()
+                                .gap_3()
                                 .child(
-                                    Input::new(&search_entity),
+                                    style_model_dropdown(
+                                        &format!("style-stt-{index}"),
+                                        &stt_display,
+                                        &stt_models,
+                                        self.shared.clone(),
+                                        index,
+                                        true,
+                                    ),
+                                )
+                                .child(
+                                    style_model_dropdown(
+                                        &format!("style-llm-{index}"),
+                                        &llm_display,
+                                        &llm_models,
+                                        self.shared.clone(),
+                                        index,
+                                        false,
+                                    ),
                                 ),
-                        )
-                        .child(
-                            div()
-                                .id(SharedString::from(format!(
-                                    "app-grid-scroll-{index}"
-                                )))
-                                .flex_1()
-                                .overflow_y_scrollbar()
-                                .child(grid),
-                        )
-                        .into_any_element()
-                });
-
-            // Style card
-            let mut style_card = settings_card(cx);
-
-            // Header row: name input + remove button
-            style_card = style_card.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .mr_2()
-                            .child(
-                                Input::new(&style.name)
-                                    .appearance(false),
-                            ),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("remove-style-{index}")))
-                            .label("Remove")
-                            .danger()
-                            .small()
-                            .compact()
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.styles.remove(index);
-                                this.schedule_autosave(cx);
-                                cx.notify();
-                            })),
-                    ),
-            );
-
-            // Apps row
-            style_card = style_card.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(field_label("Apps", cx))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(app_row)
-                            .child(add_app_popover),
-                    ),
-            );
-
-            // Prompt
-            style_card = style_card.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(field_label("System Prompt", cx))
-                    .child(Input::new(&style.prompt)),
-            );
+                        ),
+                )
+            } else {
+                None
+            };
 
             container = container.child(
-                section_block(&display_name, cx).child(style_card),
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .when_some(body, |this, body| this.child(body)),
             );
         }
 
@@ -716,6 +740,8 @@ impl SettingsApp {
                             name: format!("Style {style_num}"),
                             apps: Vec::new(),
                             prompt: default_prompt,
+                            stt_model: None,
+                            llm_model: None,
                         };
                         let (inputs, subs) =
                             Self::create_style_inputs(&entry, window, cx);
@@ -1116,6 +1142,7 @@ impl Render for SettingsApp {
 
 // -- Reusable UI helpers ---------------------------------------------------------
 
+#[allow(dead_code)]
 fn card(cx: &App) -> gpui::Div {
     div()
         .flex()
@@ -1128,6 +1155,7 @@ fn card(cx: &App) -> gpui::Div {
         .bg(cx.theme().secondary)
 }
 
+#[allow(dead_code)]
 fn section_heading(text: &str, cx: &App) -> gpui::Div {
     div()
         .font_weight(gpui::FontWeight::BOLD)
@@ -1146,6 +1174,7 @@ fn field_label(text: &str, cx: &App) -> gpui::Div {
         .child(text.to_string())
 }
 
+#[allow(dead_code)]
 fn read_only_row(label: &str, value: &str, cx: &App) -> gpui::Div {
     div()
         .flex()
@@ -1174,7 +1203,7 @@ fn settings_card(cx: &App) -> gpui::Div {
         .flex()
         .flex_col()
         .px_4()
-        .py_1()
+        .py_3()
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().border)
@@ -1232,6 +1261,104 @@ fn hint_row(text: &str, cx: &App) -> gpui::Div {
         .child(text.to_string())
 }
 
+/// Dropdown button for selecting a default model (STT or LLM).
+fn model_dropdown_button(
+    id: &str,
+    current_model: &str,
+    models: &[crate::config::ModelInfo],
+    shared: SharedState,
+    updater: fn(&mut GlideConfig, String),
+) -> impl IntoElement {
+    let models = models.to_vec();
+    let label = SharedString::from(current_model.to_string());
+    Button::new(SharedString::from(id.to_string()))
+        .label(label)
+        .ghost()
+        .small()
+        .compact()
+        .dropdown_menu(move |menu, _, _| {
+            let mut m = menu;
+            for model in &models {
+                let model_id = model.id.clone();
+                let shared = shared.clone();
+                m = m.item(
+                    PopupMenuItem::new(SharedString::from(format!(
+                        "{} — {}",
+                        model.provider, model.id
+                    )))
+                    .on_click(move |_, _, _cx| {
+                        let id = model_id.clone();
+                        let _ = shared.update_config(|config| {
+                            updater(config, id);
+                        });
+                    }),
+                );
+            }
+            m
+        })
+}
+
+/// Dropdown button for per-style model override (with "Default" option).
+fn style_model_dropdown(
+    id: &str,
+    current_display: &str,
+    models: &[crate::config::ModelInfo],
+    shared: SharedState,
+    style_index: usize,
+    is_stt: bool,
+) -> impl IntoElement {
+    let models = models.to_vec();
+    let label = SharedString::from(current_display.to_string());
+    Button::new(SharedString::from(id.to_string()))
+        .label(label)
+        .ghost()
+        .small()
+        .compact()
+        .dropdown_menu(move |menu, _, _| {
+            let mut m = menu;
+            // "Default" option — clears the override
+            let shared_default = shared.clone();
+            m = m.item(
+                PopupMenuItem::new("Default (use global)")
+                    .on_click(move |_, _, _cx| {
+                        let _ = shared_default.update_config(|config| {
+                            if let Some(style) = config.llm.prompt.styles.get_mut(style_index) {
+                                if is_stt {
+                                    style.stt_model = None;
+                                } else {
+                                    style.llm_model = None;
+                                }
+                            }
+                        });
+                    }),
+            );
+            // Specific model options
+            for model in &models {
+                let model_id = model.id.clone();
+                let shared = shared.clone();
+                m = m.item(
+                    PopupMenuItem::new(SharedString::from(format!(
+                        "{} — {}",
+                        model.provider, model.id
+                    )))
+                    .on_click(move |_, _, _cx| {
+                        let id = model_id.clone();
+                        let _ = shared.update_config(|config| {
+                            if let Some(style) = config.llm.prompt.styles.get_mut(style_index) {
+                                if is_stt {
+                                    style.stt_model = Some(id);
+                                } else {
+                                    style.llm_model = Some(id);
+                                }
+                            }
+                        });
+                    }),
+                );
+            }
+            m
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,7 +1392,7 @@ mod tests {
     async fn test_settings_app_creation(cx: &mut TestAppContext) {
         let (view, cx) = init_and_create_view(cx);
         cx.read_entity(&view, |app, _| {
-            assert_eq!(app.active_pane, SettingsPane::Models);
+            assert_eq!(app.active_pane, SettingsPane::General);
             assert!(!app.save_pending);
         });
     }
@@ -1276,21 +1403,10 @@ mod tests {
         let defaults = GlideConfig::default();
 
         cx.read_entity(&view, |app, cx| {
+            // Check OpenAI provider base URL is loaded
             assert_eq!(
-                app.stt_model.read(cx).value().to_string(),
-                defaults.stt.openai.model
-            );
-            assert_eq!(
-                app.stt_endpoint.read(cx).value().to_string(),
-                defaults.stt.openai.endpoint
-            );
-            assert_eq!(
-                app.llm_model.read(cx).value().to_string(),
-                defaults.llm.openai.model
-            );
-            assert_eq!(
-                app.llm_endpoint.read(cx).value().to_string(),
-                defaults.llm.openai.endpoint
+                app.openai_inputs.base_url.read(cx).value().to_string(),
+                defaults.providers.openai.base_url,
             );
         });
     }
@@ -1325,10 +1441,10 @@ mod tests {
 
         cx.update_entity(&view, |app, cx| {
             let draft = app.draft_from_inputs(cx);
-            assert_eq!(draft.stt.openai.model, defaults.stt.openai.model);
-            assert_eq!(draft.stt.openai.endpoint, defaults.stt.openai.endpoint);
-            assert_eq!(draft.llm.openai.model, defaults.llm.openai.model);
-            assert_eq!(draft.llm.openai.endpoint, defaults.llm.openai.endpoint);
+            assert_eq!(
+                draft.providers.openai.base_url,
+                defaults.providers.openai.base_url,
+            );
             assert_eq!(draft.llm.prompt.system, defaults.llm.prompt.system);
         });
     }
@@ -1345,7 +1461,7 @@ mod tests {
         // InputState/subscription layer (it would be in Metal rendering)
         cx.read_entity(&view, |app, _| {
             // Just verify the view is still alive and accessible
-            assert_eq!(app.active_pane, SettingsPane::Models);
+            assert_eq!(app.active_pane, SettingsPane::General);
         });
     }
 
@@ -1383,6 +1499,8 @@ mod tests {
                     name: "TestApp".to_string(),
                     apps: vec![],
                     prompt: "test prompt".to_string(),
+                    stt_model: None,
+                    llm_model: None,
                 };
                 let (inputs, subs) =
                     SettingsApp::create_style_inputs(&entry, window, cx);
@@ -1411,6 +1529,8 @@ mod tests {
                         name: name.to_string(),
                         apps: vec![],
                         prompt: "prompt".to_string(),
+                        stt_model: None,
+                        llm_model: None,
                     };
                     let (inputs, subs) =
                         SettingsApp::create_style_inputs(&entry, window, cx);
@@ -1451,7 +1571,7 @@ mod tests {
         let (view, mut cx) = init_and_create_view(cx);
 
         // Get the stt_model input entity
-        let input_entity = cx.read_entity(&view, |app, _| app.stt_model.clone());
+        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
 
         // Directly call replace_text_in_range (same as macOS insert_text)
         cx.update(|window, cx| {
@@ -1477,7 +1597,7 @@ mod tests {
     async fn test_masked_input_replace_text_and_render(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        let input_entity = cx.read_entity(&view, |app, _| app.stt_api_key.clone());
+        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.api_key.clone());
 
         cx.update(|window, cx| {
             input_entity.update(cx, |state, cx| {
@@ -1523,7 +1643,7 @@ mod tests {
     async fn test_rapid_typing_stress(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        let input_entity = cx.read_entity(&view, |app, _| app.stt_model.clone());
+        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
 
         // Simulate rapid character-by-character insertion (like fast typing)
         for ch in "hello world, this is a longer sentence for stress testing".chars() {
@@ -1550,7 +1670,7 @@ mod tests {
     async fn test_ime_marked_text_and_render(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        let input_entity = cx.read_entity(&view, |app, _| app.stt_model.clone());
+        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
 
         // Simulate IME: first mark text (uncommitted), then commit
         cx.update(|window, cx| {
@@ -1585,7 +1705,7 @@ mod tests {
     async fn test_bounds_for_range_after_typing(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        let input_entity = cx.read_entity(&view, |app, _| app.stt_model.clone());
+        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
 
         // Insert some text first
         cx.update(|window, cx| {
@@ -1617,7 +1737,7 @@ mod tests {
     async fn test_input_change_subscription_fires(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        let input_entity = cx.read_entity(&view, |app, _| app.stt_model.clone());
+        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
 
         // Verify not pending before
         cx.read_entity(&view, |app, _| {
@@ -1654,7 +1774,7 @@ mod tests {
     async fn test_full_render_after_edit(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        let input_entity = cx.read_entity(&view, |app, _| app.stt_model.clone());
+        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
 
         // Edit the input
         cx.update(|window, cx| {
@@ -1675,7 +1795,7 @@ mod tests {
         // Verify the app is still healthy
         cx.update_entity(&view, |app, cx| {
             let draft = app.draft_from_inputs(cx);
-            assert!(draft.stt.openai.model.contains("gpt-4o"));
+            assert!(!draft.providers.openai.base_url.is_empty());
         });
     }
 }
