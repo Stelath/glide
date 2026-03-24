@@ -19,7 +19,8 @@ mod keycode {
     pub const F10: u16 = 109;
 }
 
-// CGEvent flag masks for detecting modifier press vs release.
+// CGEvent flag masks used in tests.
+#[cfg(test)]
 mod flags {
     pub const ALTERNATE: u64 = 0x00080000; // NSEventModifierFlagOption
     pub const COMMAND: u64 = 0x00100000; // NSEventModifierFlagCommand
@@ -184,7 +185,7 @@ unsafe extern "C" fn event_tap_callback(
         ffi::kCGEventFlagsChanged => {
             if is_trigger_keycode(trigger, keycode) {
                 let event_flags = unsafe { ffi::CGEventGetFlags(event) };
-                let is_down = modifier_is_pressed(trigger, event_flags);
+                let is_down = modifier_is_pressed(keycode, event_flags);
                 if is_down && !ctx.pressed {
                     handle_press(ctx);
                 } else if !is_down && ctx.pressed {
@@ -254,13 +255,12 @@ fn is_trigger_keycode(trigger: HotkeyTrigger, keycode: u16) -> bool {
     }
 }
 
-fn modifier_is_pressed(trigger: HotkeyTrigger, event_flags: u64) -> bool {
-    match trigger {
-        HotkeyTrigger::Option => event_flags & flags::ALTERNATE != 0,
-        HotkeyTrigger::CommandRight => event_flags & flags::COMMAND != 0,
-        // F-keys and custom keys are not modifiers; they use keyDown/keyUp, not flagsChanged.
-        _ => false,
+fn modifier_is_pressed(keycode: u16, event_flags: u64) -> bool {
+    let flag = crate::config::modifier_flag_for_keycode(keycode);
+    if flag == 0 {
+        return false;
     }
+    event_flags & flag != 0
 }
 
 #[cfg(test)]
@@ -302,21 +302,31 @@ mod tests {
 
     #[test]
     fn test_modifier_pressed_option() {
-        assert!(modifier_is_pressed(HotkeyTrigger::Option, flags::ALTERNATE));
-        assert!(!modifier_is_pressed(HotkeyTrigger::Option, 0));
-        assert!(!modifier_is_pressed(HotkeyTrigger::Option, flags::COMMAND));
+        assert!(modifier_is_pressed(keycode::OPTION_LEFT, flags::ALTERNATE));
+        assert!(modifier_is_pressed(keycode::OPTION_RIGHT, flags::ALTERNATE));
+        assert!(!modifier_is_pressed(keycode::OPTION_LEFT, 0));
+        assert!(!modifier_is_pressed(keycode::OPTION_LEFT, flags::COMMAND));
     }
 
     #[test]
-    fn test_modifier_pressed_command_right() {
-        assert!(modifier_is_pressed(HotkeyTrigger::CommandRight, flags::COMMAND));
-        assert!(!modifier_is_pressed(HotkeyTrigger::CommandRight, 0));
+    fn test_modifier_pressed_command() {
+        assert!(modifier_is_pressed(keycode::COMMAND_RIGHT, flags::COMMAND));
+        assert!(modifier_is_pressed(55, flags::COMMAND)); // Left Cmd
+        assert!(!modifier_is_pressed(keycode::COMMAND_RIGHT, 0));
     }
 
     #[test]
-    fn test_modifier_pressed_fkeys_always_false() {
-        assert!(!modifier_is_pressed(HotkeyTrigger::F8, flags::ALTERNATE));
-        assert!(!modifier_is_pressed(HotkeyTrigger::F9, flags::COMMAND));
-        assert!(!modifier_is_pressed(HotkeyTrigger::F10, 0xFFFFFFFF));
+    fn test_modifier_pressed_shift_and_control() {
+        assert!(modifier_is_pressed(56, 0x00020000)); // Left Shift
+        assert!(modifier_is_pressed(60, 0x00020000)); // Right Shift
+        assert!(modifier_is_pressed(59, 0x00040000)); // Left Ctrl
+        assert!(modifier_is_pressed(62, 0x00040000)); // Right Ctrl
+    }
+
+    #[test]
+    fn test_modifier_pressed_non_modifier_returns_false() {
+        assert!(!modifier_is_pressed(keycode::F8, flags::ALTERNATE));
+        assert!(!modifier_is_pressed(keycode::F9, flags::COMMAND));
+        assert!(!modifier_is_pressed(0, 0xFFFFFFFF)); // 'A' key
     }
 }

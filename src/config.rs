@@ -1,3 +1,6 @@
+use std::ffi::c_void;
+use std::path::Path;
+use std::sync::OnceLock;
 use std::{fmt, fs, path::PathBuf};
 
 use anyhow::{Context, Result};
@@ -198,12 +201,14 @@ impl HotkeyTrigger {
     /// Map a GPUI keystroke key string to a trigger.
     pub fn from_key_name(key: &str) -> Self {
         match key {
-            "alt" => Self::Option,
+            "alt" => Self::Option,                // ⌥ Option (left)
+            "platform" => Self::Custom(55),       // ⌘ Command (left)
+            "control" => Self::Custom(59),        // ⌃ Control (left)
+            "shift" => Self::Custom(56),          // ⇧ Shift (left)
             "f8" => Self::F8,
             "f9" => Self::F9,
             "f10" => Self::F10,
             _ => {
-                // Map common key names to macOS virtual keycodes
                 let code = key_name_to_keycode(key);
                 Self::Custom(code)
             }
@@ -283,6 +288,25 @@ fn key_name_to_keycode(name: &str) -> u16 {
         "f1" => 122, "f2" => 120, "f3" => 99, "f4" => 118,
         "f5" => 96, "f6" => 97, "f7" => 98, "f8" => 100,
         "f9" => 101, "f10" => 109, "f11" => 103, "f12" => 111,
+        _ => 0,
+    }
+}
+
+/// Whether a macOS virtual keycode is a modifier key (fires flagsChanged, not keyDown/keyUp).
+#[allow(dead_code)]
+pub fn is_modifier_keycode(code: u16) -> bool {
+    // 54=RCmd, 55=LCmd, 56=LShift, 57=CapsLock, 58=LOption, 59=LCtrl, 60=RShift, 61=ROption, 62=RCtrl
+    matches!(code, 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 62)
+}
+
+/// Return the CGEvent flag mask for a modifier keycode, used by the CGEventTap backend.
+pub fn modifier_flag_for_keycode(code: u16) -> u64 {
+    match code {
+        54 | 55 => 0x00100000, // NSEventModifierFlagCommand
+        56 | 60 => 0x00020000, // NSEventModifierFlagShift
+        58 | 61 => 0x00080000, // NSEventModifierFlagOption
+        59 | 62 => 0x00040000, // NSEventModifierFlagControl
+        57 => 0x00010000,      // NSEventModifierFlagCapsLock
         _ => 0,
     }
 }
@@ -468,12 +492,16 @@ impl OpenAiLlmConfig {
 #[serde(default)]
 pub struct PromptConfig {
     pub system: String,
-    pub app_overrides: Vec<AppPromptOverride>,
+    #[serde(alias = "app_overrides")]
+    pub styles: Vec<Style>,
 }
 
+/// A dictation style with a name, assigned apps, and a custom system prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppPromptOverride {
-    pub app_name: String,
+pub struct Style {
+    pub name: String,
+    #[serde(default)]
+    pub apps: Vec<String>,
     pub prompt: String,
 }
 
@@ -481,8 +509,209 @@ impl Default for PromptConfig {
     fn default() -> Self {
         Self {
             system: "You are a dictation assistant. Clean up the following raw speech transcript into well-formatted text. Fix grammar, punctuation, and filler words. Preserve the speaker's intent exactly.".to_string(),
-            app_overrides: Vec::new(),
+            styles: vec![
+                Style {
+                    name: "Professional".to_string(),
+                    apps: vec![],
+                    prompt: "You are a dictation assistant for professional communication. Clean up the transcript into clear, formal, well-structured text.".to_string(),
+                },
+                Style {
+                    name: "Messaging".to_string(),
+                    apps: vec![],
+                    prompt: "You are a dictation assistant for casual messaging. Keep the tone informal and conversational. Fix obvious errors but preserve the casual voice.".to_string(),
+                },
+            ],
         }
+    }
+}
+
+/// List application names from /Applications (macOS).
+pub fn list_applications() -> Vec<String> {
+    let mut apps: Vec<String> = std::fs::read_dir("/Applications")
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.extension().map(|e| e == "app").unwrap_or(false) {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    apps.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    apps
+}
+
+// --- App icon extraction via NSWorkspace ---
+
+#[link(name = "AppKit", kind = "framework")]
+#[link(name = "Foundation", kind = "framework")]
+unsafe extern "C" {}
+
+// Objective-C runtime FFI — objc_msgSend is NOT variadic on ARM64.
+// We declare the base 2-arg form and transmute to typed function pointers
+// for calls with extra arguments to get the correct register-based ABI.
+unsafe extern "C" {
+    fn objc_getClass(name: *const u8) -> *mut c_void;
+    fn sel_registerName(name: *const u8) -> *mut c_void;
+    fn objc_msgSend(receiver: *mut c_void, sel: *mut c_void) -> *mut c_void;
+}
+
+// Typed function pointer aliases for objc_msgSend with extra args
+type MsgSendPtr = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
+type MsgSendUsize = unsafe extern "C" fn(*mut c_void, *mut c_void, usize, *mut c_void) -> *mut c_void;
+type MsgSendLen = unsafe extern "C" fn(*mut c_void, *mut c_void) -> usize;
+
+static ICON_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+fn icon_cache_dir() -> &'static Path {
+    ICON_CACHE_DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join("glide-icons");
+        let _ = fs::create_dir_all(&dir);
+        dir
+    })
+}
+
+/// Get the cached PNG icon path for an app. Returns None if not yet cached.
+/// Icons are extracted in the background by `preload_app_icons()`.
+pub fn app_icon_path(app_name: &str) -> Option<PathBuf> {
+    let png_path = icon_cache_dir().join(format!("{app_name}.png"));
+    if png_path.exists() {
+        Some(png_path)
+    } else {
+        None
+    }
+}
+
+/// Pre-extract all app icons on a background thread so the UI never blocks.
+pub fn preload_app_icons() {
+    std::thread::spawn(|| {
+        let apps = list_applications();
+        for app in &apps {
+            let png_path = icon_cache_dir().join(format!("{app}.png"));
+            if png_path.exists() {
+                continue;
+            }
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = extract_icon_to_png(app, &png_path);
+            }));
+        }
+    });
+}
+
+/// Use NSWorkspace to extract an app's icon and save as PNG.
+fn extract_icon_to_png(app_name: &str, dest: &Path) -> Result<()> {
+    // All objc_msgSend calls with extra args must use typed function pointers
+    // (not variadic) to get the correct ARM64 register-based calling convention.
+    let msg1: MsgSendPtr = unsafe { std::mem::transmute(objc_msgSend as *const ()) };
+    let msg_usize: MsgSendUsize =
+        unsafe { std::mem::transmute(objc_msgSend as *const ()) };
+    let msg_len: MsgSendLen =
+        unsafe { std::mem::transmute(objc_msgSend as *const ()) };
+
+    unsafe {
+        let workspace_class = objc_getClass(b"NSWorkspace\0".as_ptr());
+        if workspace_class.is_null() {
+            anyhow::bail!("NSWorkspace class not found");
+        }
+        let shared_sel = sel_registerName(b"sharedWorkspace\0".as_ptr());
+        let workspace = objc_msgSend(workspace_class, shared_sel);
+        if workspace.is_null() {
+            anyhow::bail!("failed to get NSWorkspace");
+        }
+
+        // Build NSString for the app path using CString for proper null termination
+        let app_path =
+            std::ffi::CString::new(format!("/Applications/{app_name}.app"))
+                .context("invalid app name")?;
+        let nsstring_class = objc_getClass(b"NSString\0".as_ptr());
+        let string_sel =
+            sel_registerName(b"stringWithUTF8String:\0".as_ptr());
+        let ns_path =
+            msg1(nsstring_class, string_sel, app_path.as_ptr() as *mut c_void);
+        if ns_path.is_null() {
+            anyhow::bail!("failed to create NSString");
+        }
+
+        // [workspace iconForFile:path]
+        let icon_sel = sel_registerName(b"iconForFile:\0".as_ptr());
+        let icon = msg1(workspace, icon_sel, ns_path);
+        if icon.is_null() {
+            anyhow::bail!("failed to get icon");
+        }
+
+        // [icon TIFFRepresentation]
+        let tiff_sel = sel_registerName(b"TIFFRepresentation\0".as_ptr());
+        let tiff_data = objc_msgSend(icon, tiff_sel);
+        if tiff_data.is_null() {
+            anyhow::bail!("failed to get TIFF data");
+        }
+
+        // [NSBitmapImageRep imageRepWithData:tiff]
+        let rep_class = objc_getClass(b"NSBitmapImageRep\0".as_ptr());
+        if rep_class.is_null() {
+            anyhow::bail!("NSBitmapImageRep class not found");
+        }
+        let rep_sel = sel_registerName(b"imageRepWithData:\0".as_ptr());
+        let rep = msg1(rep_class, rep_sel, tiff_data);
+        if rep.is_null() {
+            anyhow::bail!("failed to create bitmap rep");
+        }
+
+        // [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+        let png_sel = sel_registerName(
+            b"representationUsingType:properties:\0".as_ptr(),
+        );
+        let dict_class = objc_getClass(b"NSDictionary\0".as_ptr());
+        let empty_dict_sel = sel_registerName(b"dictionary\0".as_ptr());
+        let empty_dict = objc_msgSend(dict_class, empty_dict_sel);
+        let png_data = msg_usize(rep, png_sel, 4 /* PNG */, empty_dict);
+        if png_data.is_null() {
+            anyhow::bail!("failed to create PNG data");
+        }
+
+        // Read bytes from NSData
+        let bytes_sel = sel_registerName(b"bytes\0".as_ptr());
+        let length_sel = sel_registerName(b"length\0".as_ptr());
+        let bytes_ptr = objc_msgSend(png_data, bytes_sel) as *const u8;
+        let length = msg_len(png_data, length_sel);
+
+        if bytes_ptr.is_null() || length == 0 {
+            anyhow::bail!("empty PNG data");
+        }
+
+        let bytes = std::slice::from_raw_parts(bytes_ptr, length);
+        fs::write(dest, bytes)
+            .with_context(|| format!("failed to write icon to {}", dest.display()))?;
+
+        Ok(())
+    }
+}
+
+/// Fuzzy subsequence match. Returns a score if all query chars appear in order
+/// in the candidate (case-insensitive). Higher score = better match.
+pub fn fuzzy_match(query: &str, candidate: &str) -> Option<i32> {
+    if query.is_empty() {
+        return Some(0);
+    }
+    let query_lower = query.to_lowercase();
+    let candidate_lower = candidate.to_lowercase();
+    let mut score = 0i32;
+    let mut qi = query_lower.chars().peekable();
+    for (i, c) in candidate_lower.chars().enumerate() {
+        if qi.peek() == Some(&c) {
+            qi.next();
+            score += 100 - i as i32;
+        }
+    }
+    if qi.peek().is_none() {
+        Some(score)
+    } else {
+        None
     }
 }
 

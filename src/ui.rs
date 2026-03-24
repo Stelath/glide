@@ -1,18 +1,21 @@
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, App, Entity, SharedString, Subscription, Window};
+use gpui::{div, img, App, Entity, FocusHandle, SharedString, Subscription, Window};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_component::popover::Popover;
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem, SidebarToggleButton};
 use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::{Icon, IconName};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::Sizable;
 use gpui_component::ActiveTheme;
 use gpui_component::Side;
 
 use crate::app::{AppSnapshot, SharedState};
-use crate::config::{AppPromptOverride, GlideConfig, HotkeyTrigger, LlmProviderKind, OverlayStyle, ThemePreference};
+use crate::config::{GlideConfig, HotkeyTrigger, LlmProviderKind, OverlayStyle, Style, ThemePreference};
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(800);
 
@@ -33,23 +36,16 @@ pub fn apply_theme_preference(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsPane {
     Models,
-    AppPrompts,
+    Styles,
     General,
 }
 
-impl SettingsPane {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Models => "Models",
-            Self::AppPrompts => "App Prompts",
-            Self::General => "General",
-        }
-    }
-}
 
-struct AppOverrideInputs {
-    app_name: Entity<InputState>,
+struct StyleInputs {
+    name: Entity<InputState>,
+    apps: Vec<String>,
     prompt: Entity<InputState>,
+    search: Entity<InputState>,
 }
 
 pub struct SettingsApp {
@@ -57,6 +53,7 @@ pub struct SettingsApp {
     active_pane: SettingsPane,
     sidebar_collapsed: bool,
     recording_hotkey: bool,
+    hotkey_focus: FocusHandle,
 
     stt_api_key: Entity<InputState>,
     stt_env_fallback: Entity<InputState>,
@@ -69,7 +66,7 @@ pub struct SettingsApp {
     llm_endpoint: Entity<InputState>,
 
     default_prompt: Entity<InputState>,
-    app_overrides: Vec<AppOverrideInputs>,
+    styles: Vec<StyleInputs>,
 
     save_pending: bool,
     _subscriptions: Vec<Subscription>,
@@ -131,14 +128,14 @@ impl SettingsApp {
             cx.subscribe_in(&default_prompt, window, Self::on_input_change),
         ];
 
-        let app_overrides: Vec<_> = config
+        let styles: Vec<_> = config
             .llm
             .prompt
-            .app_overrides
+            .styles
             .iter()
             .map(|entry| {
                 let (inputs, entry_subs) =
-                    Self::create_override_inputs(entry, window, cx);
+                    Self::create_style_inputs(entry, window, cx);
                 subs.extend(entry_subs);
                 inputs
             })
@@ -156,6 +153,7 @@ impl SettingsApp {
             active_pane: SettingsPane::Models,
             sidebar_collapsed: false,
             recording_hotkey: false,
+            hotkey_focus: cx.focus_handle(),
             stt_api_key,
             stt_env_fallback,
             stt_model,
@@ -165,30 +163,39 @@ impl SettingsApp {
             llm_model,
             llm_endpoint,
             default_prompt,
-            app_overrides,
+            styles,
             save_pending: false,
             _subscriptions: subs,
         }
     }
 
-    fn create_override_inputs(
-        entry: &AppPromptOverride,
+    fn create_style_inputs(
+        entry: &Style,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
-    ) -> (AppOverrideInputs, Vec<Subscription>) {
-        let app_name = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&entry.app_name)
+    ) -> (StyleInputs, Vec<Subscription>) {
+        let name = cx.new(|cx| {
+            InputState::new(window, cx).default_value(&entry.name)
         });
         let prompt = cx.new(|cx| {
             InputState::new(window, cx)
                 .auto_grow(3, 12)
                 .default_value(&entry.prompt)
         });
+        let search = cx.new(|cx| InputState::new(window, cx));
         let subs = vec![
-            cx.subscribe_in(&app_name, window, Self::on_input_change),
+            cx.subscribe_in(&name, window, Self::on_input_change),
             cx.subscribe_in(&prompt, window, Self::on_input_change),
         ];
-        (AppOverrideInputs { app_name, prompt }, subs)
+        (
+            StyleInputs {
+                name,
+                apps: entry.apps.clone(),
+                prompt,
+                search,
+            },
+            subs,
+        )
     }
 
     fn on_input_change(
@@ -238,12 +245,13 @@ impl SettingsApp {
 
         config.llm.prompt.system = self.default_prompt.read(cx).value().to_string();
 
-        config.llm.prompt.app_overrides = self
-            .app_overrides
+        config.llm.prompt.styles = self
+            .styles
             .iter()
-            .map(|ov| AppPromptOverride {
-                app_name: ov.app_name.read(cx).value().to_string(),
-                prompt: ov.prompt.read(cx).value().to_string(),
+            .map(|s| Style {
+                name: s.name.read(cx).value().to_string(),
+                apps: s.apps.clone(),
+                prompt: s.prompt.read(cx).value().to_string(),
             })
             .collect();
 
@@ -271,11 +279,11 @@ impl SettingsApp {
                             })),
                     )
                     .child(
-                        SidebarMenuItem::new("App Prompts")
-                            .icon(Icon::new(IconName::File))
-                            .active(self.active_pane == SettingsPane::AppPrompts)
+                        SidebarMenuItem::new("Styles")
+                            .icon(Icon::new(IconName::Palette))
+                            .active(self.active_pane == SettingsPane::Styles)
                             .on_click(cx.listener(|this, _, _window, cx| {
-                                this.active_pane = SettingsPane::AppPrompts;
+                                this.active_pane = SettingsPane::Styles;
                                 cx.notify();
                             })),
                     )
@@ -306,20 +314,12 @@ impl SettingsApp {
             .id("content-scroll")
             .overflow_y_scroll()
             .bg(cx.theme().background)
-            .child(
-                div()
-                    .text_2xl()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(cx.theme().foreground)
-                    .mb_4()
-                    .child(self.active_pane.label()),
-            )
             .child(match self.active_pane {
                 SettingsPane::Models => {
                     self.render_models_pane(window, cx, &snapshot).into_any_element()
                 }
-                SettingsPane::AppPrompts => {
-                    self.render_app_prompts_pane(window, cx).into_any_element()
+                SettingsPane::Styles => {
+                    self.render_styles_pane(window, cx).into_any_element()
                 }
                 SettingsPane::General => {
                     self.render_general_pane(window, cx, &snapshot).into_any_element()
@@ -405,86 +405,321 @@ impl SettingsApp {
             )
     }
 
-    fn render_app_prompts_pane(
-        &self,
+    fn render_styles_pane(
+        &mut self,
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let mut container = div().flex().flex_col().gap_3();
+        let available_apps = crate::config::list_applications();
+        let mut container = div().flex().flex_col().gap_4();
 
+        // -- Default Prompt ------------------------------------------------
         container = container.child(
-            card(cx)
-                .child(section_heading("Default Prompt", cx))
-                .child(hint_row(
-                    "Used for all applications unless overridden below.",
-                    cx,
-                ))
-                .child(field_label("System Prompt", cx))
-                .child(Input::new(&self.default_prompt)),
+            section_block("Default Prompt", cx)
+                .child(
+                    settings_card(cx)
+                        .child(hint_row(
+                            "Used for all applications unless a style overrides it.",
+                            cx,
+                        ))
+                        .child(Input::new(&self.default_prompt)),
+                ),
         );
 
-        let mut overrides_card = card(cx)
-            .child(section_heading("Per-App Overrides", cx))
-            .child(hint_row(
-                "Custom prompts for specific apps. The override replaces the default when dictating in a matched app.",
-                cx,
-            ));
+        // -- Styles --------------------------------------------------------
+        for (index, style) in self.styles.iter().enumerate() {
+            let style_name = style.name.read(cx).value().to_string();
+            let display_name = if style_name.is_empty() {
+                format!("Style #{}", index + 1)
+            } else {
+                style_name
+            };
 
-        for (index, ov) in self.app_overrides.iter().enumerate() {
-            overrides_card = overrides_card.child(
+            // App icons row — show first 5, then "+N" overflow
+            let apps = &style.apps;
+            let max_shown = 5;
+            let mut app_row = div().flex().items_center().gap_1().flex_wrap();
+            for (ai, app) in apps.iter().take(max_shown).enumerate() {
+                let app_clone = app.clone();
+                let icon_element = if let Some(icon_path) =
+                    crate::config::app_icon_path(app)
+                {
+                    img(icon_path)
+                        .w(gpui::px(20.0))
+                        .h(gpui::px(20.0))
+                        .rounded_sm()
+                        .into_any_element()
+                } else {
+                    let first = app.chars().next().unwrap_or('?').to_uppercase().to_string();
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(gpui::px(20.0))
+                        .h(gpui::px(20.0))
+                        .rounded_sm()
+                        .bg(cx.theme().accent.opacity(0.2))
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(cx.theme().accent_foreground)
+                        .child(first)
+                        .into_any_element()
+                };
+                app_row = app_row.child(
+                    div()
+                        .id(SharedString::from(format!("app-{index}-{ai}")))
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(cx.theme().secondary)
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .text_xs()
+                        .child(icon_element)
+                        .child(
+                            div()
+                                .text_color(cx.theme().foreground)
+                                .child(app.clone()),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("rm-app-{index}-{ai}")))
+                                .label("×")
+                                .ghost()
+                                .xsmall()
+                                .compact()
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.styles[index]
+                                        .apps
+                                        .retain(|a| a != &app_clone);
+                                    this.schedule_autosave(cx);
+                                    cx.notify();
+                                })),
+                        ),
+                );
+            }
+            if apps.len() > max_shown {
+                app_row = app_row.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("+{}", apps.len() - max_shown)),
+                );
+            }
+
+            // "+ Add App" button with popover grid picker
+            let apps_for_filter = apps.clone();
+            let popover_apps: Vec<String> = available_apps
+                .iter()
+                .filter(|a| !apps_for_filter.contains(a))
+                .cloned()
+                .collect();
+
+            let entity_for_apps = cx.weak_entity();
+            let search_entity = style.search.clone();
+            let popover_id = SharedString::from(format!("app-picker-{index}"));
+            let add_app_popover = Popover::new(popover_id)
+                .trigger(
+                    Button::new(SharedString::from(format!("add-app-{index}")))
+                        .label("+ Add App")
+                        .ghost()
+                        .small()
+                        .compact(),
+                )
+                .content(move |_state, _window, cx| {
+                    let query = search_entity.read(cx).value().to_string();
+
+                    // Fuzzy filter and sort
+                    let mut scored: Vec<(&String, i32)> = popover_apps
+                        .iter()
+                        .filter_map(|a| {
+                            crate::config::fuzzy_match(&query, a).map(|s| (a, s))
+                        })
+                        .collect();
+                    scored.sort_by(|a, b| b.1.cmp(&a.1));
+
+                    let mut grid = div().flex().flex_wrap().gap_2().p_2();
+                    for (app, _score) in &scored {
+                        let app_name = (*app).clone();
+                        let entity = entity_for_apps.clone();
+
+                        // Real app icon or fallback
+                        let tile_icon = if let Some(icon_path) =
+                            crate::config::app_icon_path(app)
+                        {
+                            img(icon_path)
+                                .w(gpui::px(40.0))
+                                .h(gpui::px(40.0))
+                                .rounded_lg()
+                                .into_any_element()
+                        } else {
+                            let first = app
+                                .chars()
+                                .next()
+                                .unwrap_or('?')
+                                .to_uppercase()
+                                .to_string();
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(gpui::px(40.0))
+                                .h(gpui::px(40.0))
+                                .rounded_lg()
+                                .bg(cx.theme().accent.opacity(0.2))
+                                .text_lg()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(cx.theme().accent_foreground)
+                                .child(first)
+                                .into_any_element()
+                        };
+
+                        grid = grid.child(
+                            div()
+                                .id(SharedString::from(format!("pick-{app_name}")))
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap_1()
+                                .w(gpui::px(80.0))
+                                .py_2()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
+                                .child(tile_icon)
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().foreground)
+                                        .overflow_x_hidden()
+                                        .max_w(gpui::px(76.0))
+                                        .child(app_name.clone()),
+                                )
+                                .on_click(move |_, _, cx| {
+                                    let name = app_name.clone();
+                                    let _ = entity.update(cx, |this, cx| {
+                                        if !this.styles[index].apps.contains(&name) {
+                                            this.styles[index].apps.push(name);
+                                            this.schedule_autosave(cx);
+                                            cx.notify();
+                                        }
+                                    });
+                                }),
+                        );
+                    }
+
+                    div()
+                        .w(gpui::px(380.0))
+                        .max_h(gpui::px(400.0))
+                        .flex()
+                        .flex_col()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .p_2()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(
+                                    Input::new(&search_entity),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "app-grid-scroll-{index}"
+                                )))
+                                .flex_1()
+                                .overflow_y_scrollbar()
+                                .child(grid),
+                        )
+                        .into_any_element()
+                });
+
+            // Style card
+            let mut style_card = settings_card(cx);
+
+            // Header row: name input + remove button
+            style_card = style_card.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .py_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .mr_2()
+                            .child(
+                                Input::new(&style.name)
+                                    .appearance(false),
+                            ),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("remove-style-{index}")))
+                            .label("Remove")
+                            .danger()
+                            .small()
+                            .compact()
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.styles.remove(index);
+                                this.schedule_autosave(cx);
+                                cx.notify();
+                            })),
+                    ),
+            );
+
+            // Apps row
+            style_card = style_card.child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .mt_2()
-                    .pb_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
+                    .gap_1()
+                    .child(field_label("Apps", cx))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(cx.theme().primary)
-                                    .child(format!("#{}", index + 1)),
-                            )
-                            .child(
-                                Button::new(SharedString::from(format!("remove-{index}")))
-                                    .label("Remove")
-                                    .danger()
-                                    .small()
-                                    .on_click(cx.listener(move |this, _, _window, cx| {
-                                        this.app_overrides.remove(index);
-                                        this.schedule_autosave(cx);
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(field_label("Application Name", cx))
-                    .child(Input::new(&ov.app_name))
+                            .gap_2()
+                            .child(app_row)
+                            .child(add_app_popover),
+                    ),
+            );
+
+            // Prompt
+            style_card = style_card.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
                     .child(field_label("System Prompt", cx))
-                    .child(Input::new(&ov.prompt)),
+                    .child(Input::new(&style.prompt)),
+            );
+
+            container = container.child(
+                section_block(&display_name, cx).child(style_card),
             );
         }
 
-        overrides_card = overrides_card.child(
-            div().mt_3().child(
-                Button::new("add-override")
-                    .label("+ Add App Override")
+        // -- Add Style button ----------------------------------------------
+        container = container.child(
+            div().child(
+                Button::new("add-style")
+                    .label("+ Add Style")
                     .primary()
                     .on_click(cx.listener(|this, _, window, cx| {
                         let default_prompt =
                             this.default_prompt.read(cx).value().to_string();
-                        let entry = AppPromptOverride {
-                            app_name: String::new(),
+                        let style_num = this.styles.len() + 1;
+                        let entry = Style {
+                            name: format!("Style {style_num}"),
+                            apps: Vec::new(),
                             prompt: default_prompt,
                         };
                         let (inputs, subs) =
-                            Self::create_override_inputs(&entry, window, cx);
-                        this.app_overrides.push(inputs);
+                            Self::create_style_inputs(&entry, window, cx);
+                        this.styles.push(inputs);
                         this._subscriptions.extend(subs);
                         this.schedule_autosave(cx);
                         cx.notify();
@@ -492,7 +727,6 @@ impl SettingsApp {
             ),
         );
 
-        container = container.child(overrides_card);
         container
     }
 
@@ -601,29 +835,59 @@ impl SettingsApp {
                             .child(
                                 div()
                                     .id("hotkey-recorder")
+                                    .track_focus(&self.hotkey_focus)
                                     .flex_shrink_0()
-                                    .child(
-                                        shortcut_button
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.recording_hotkey = true;
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .when(is_recording, |this| {
-                                        this.on_key_down(cx.listener(
-                                            |this, event: &gpui::KeyDownEvent, window, cx| {
-                                                let key = event.keystroke.key.as_str();
-                                                let trigger = HotkeyTrigger::from_key_name(key);
+                                    .on_key_down(cx.listener(
+                                        |this, event: &gpui::KeyDownEvent, window, cx| {
+                                            if !this.recording_hotkey {
+                                                return;
+                                            }
+                                            let key = event.keystroke.key.as_str();
+                                            let trigger = HotkeyTrigger::from_key_name(key);
+                                            let _ = this.shared.update_config(|config| {
+                                                config.hotkey.trigger = trigger;
+                                            });
+                                            this.recording_hotkey = false;
+                                            window.prevent_default();
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        },
+                                    ))
+                                    .on_modifiers_changed(cx.listener(
+                                        |this, event: &gpui::ModifiersChangedEvent, _window, cx| {
+                                            if !this.recording_hotkey {
+                                                return;
+                                            }
+                                            let mods = &event.modifiers;
+                                            let trigger = if mods.platform {
+                                                Some(HotkeyTrigger::Custom(55))
+                                            } else if mods.alt {
+                                                Some(HotkeyTrigger::Option)
+                                            } else if mods.control {
+                                                Some(HotkeyTrigger::Custom(59))
+                                            } else if mods.shift {
+                                                Some(HotkeyTrigger::Custom(56))
+                                            } else {
+                                                None
+                                            };
+                                            if let Some(trigger) = trigger {
                                                 let _ = this.shared.update_config(|config| {
                                                     config.hotkey.trigger = trigger;
                                                 });
                                                 this.recording_hotkey = false;
-                                                window.prevent_default();
                                                 cx.stop_propagation();
                                                 cx.notify();
-                                            },
-                                        ))
-                                    }),
+                                            }
+                                        },
+                                    ))
+                                    .child(
+                                        shortcut_button
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.recording_hotkey = true;
+                                                window.focus(&this.hotkey_focus);
+                                                cx.notify();
+                                            })),
+                                    ),
                             ),
                         ),
                 ),
@@ -681,6 +945,88 @@ impl SettingsApp {
                 ),
         );
 
+        // -- Permissions ------------------------------------------------
+        let perms = crate::permissions::check_all();
+        let mut perm_card = settings_card(cx);
+        for (i, perm) in perms.iter().enumerate() {
+            if i > 0 {
+                perm_card = perm_card.child(
+                    div().h(gpui::px(1.0)).bg(cx.theme().border),
+                );
+            }
+            // Feature-specific icon on the left
+            let feature_icon = match perm.icon {
+                "bell" => Icon::new(IconName::Bell).size_4(),
+                "user" => Icon::new(IconName::User).size_4(),
+                "eye" => Icon::new(IconName::Eye).size_4(),
+                _ => Icon::new(IconName::Info).size_4(),
+            };
+
+            // Status icon + action on the right
+            let url = perm.settings_url;
+            let right_side = if perm.granted {
+                Icon::new(IconName::CircleCheck).size_4().into_any_element()
+            } else {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Icon::new(IconName::CircleX).size_4())
+                    .child(
+                        Button::new(SharedString::from(format!("open-{}", perm.name)))
+                            .label("Open Settings")
+                            .small()
+                            .compact()
+                            .danger()
+                            .on_click(cx.listener(move |_this, _, _window, _cx| {
+                                let _ = std::process::Command::new("open")
+                                    .arg(url)
+                                    .spawn();
+                            })),
+                    )
+                    .into_any_element()
+            };
+
+            perm_card = perm_card.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .py_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(feature_icon)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(cx.theme().foreground)
+                                            .child(perm.name),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(perm.description),
+                                    ),
+                            ),
+                    )
+                    .child(right_side),
+            );
+        }
+
+        container = container.child(
+            section_block("Permissions", cx).child(perm_card),
+        );
+
         container
     }
 }
@@ -733,33 +1079,34 @@ impl Render for SettingsApp {
                                         cx.notify();
                                     })),
                             )
-                            .child(
+                            .child({
+                                let shared_for_menu = self.shared.clone();
                                 Button::new("top-bar-mic")
                                     .label(SharedString::from(mic_name))
                                     .ghost()
                                     .small()
                                     .compact()
-                                    .on_click(cx.listener(move |this, _, _window, cx| {
-                                        let current = this
-                                            .shared
-                                            .snapshot()
-                                            .config
-                                            .audio
-                                            .device
-                                            .clone();
-                                        let next_index = devices
-                                            .iter()
-                                            .position(|d| d == &current)
-                                            .map(|i| (i + 1) % devices.len())
-                                            .unwrap_or(0);
-                                        let next = devices[next_index].clone();
-                                        let _ = this.shared.update_config(|config| {
-                                            config.audio.device = next;
-                                        });
-                                        this.shared.refresh_input_devices();
-                                        cx.notify();
-                                    })),
-                            ),
+                                    .dropdown_menu(move |menu, _, _| {
+                                        let mut m = menu;
+                                        for device in &devices {
+                                            let d = device.clone();
+                                            let shared = shared_for_menu.clone();
+                                            m = m.item(
+                                                PopupMenuItem::new(SharedString::from(
+                                                    d.clone(),
+                                                ))
+                                                .on_click(move |_, _, _cx| {
+                                                    let _ =
+                                                        shared.update_config(|config| {
+                                                            config.audio.device =
+                                                                d.clone();
+                                                        });
+                                                }),
+                                            );
+                                        }
+                                        m
+                                    })
+                            }),
                     )
                     // -- Content --
                     .child(self.render_content(window, cx)),
@@ -953,12 +1300,12 @@ mod tests {
         let (view, mut cx) = init_and_create_view(cx);
 
         cx.update_entity(&view, |app, cx| {
-            app.active_pane = SettingsPane::AppPrompts;
+            app.active_pane = SettingsPane::Styles;
             cx.notify();
         });
 
         cx.read_entity(&view, |app, _| {
-            assert_eq!(app.active_pane, SettingsPane::AppPrompts);
+            assert_eq!(app.active_pane, SettingsPane::Styles);
         });
 
         cx.update_entity(&view, |app, cx| {
@@ -1025,48 +1372,49 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_add_override(cx: &mut TestAppContext) {
+    async fn test_add_style(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.app_overrides.len(), 0);
-        });
+        let initial_count = cx.read_entity(&view, |app, _| app.styles.len());
 
-        // Simulate adding an override by directly calling the method
         cx.update(|window, cx| {
             view.update(cx, |app, cx| {
-                let entry = AppPromptOverride {
-                    app_name: "TestApp".to_string(),
+                let entry = Style {
+                    name: "TestApp".to_string(),
+                    apps: vec![],
                     prompt: "test prompt".to_string(),
                 };
                 let (inputs, subs) =
-                    SettingsApp::create_override_inputs(&entry, window, cx);
-                app.app_overrides.push(inputs);
+                    SettingsApp::create_style_inputs(&entry, window, cx);
+                app.styles.push(inputs);
                 app._subscriptions.extend(subs);
                 cx.notify();
             });
         });
 
         cx.read_entity(&view, |app, _| {
-            assert_eq!(app.app_overrides.len(), 1);
+            assert_eq!(app.styles.len(), initial_count + 1);
         });
     }
 
     #[gpui::test]
-    async fn test_remove_override(cx: &mut TestAppContext) {
+    async fn test_remove_style(cx: &mut TestAppContext) {
         let (view, mut cx) = init_and_create_view(cx);
 
-        // Add two overrides
+        let initial_count = cx.read_entity(&view, |app, _| app.styles.len());
+
+        // Add two more styles
         cx.update(|window, cx| {
             view.update(cx, |app, cx| {
-                for name in ["App1", "App2"] {
-                    let entry = AppPromptOverride {
-                        app_name: name.to_string(),
+                for name in ["Extra1", "Extra2"] {
+                    let entry = Style {
+                        name: name.to_string(),
+                        apps: vec![],
                         prompt: "prompt".to_string(),
                     };
                     let (inputs, subs) =
-                        SettingsApp::create_override_inputs(&entry, window, cx);
-                    app.app_overrides.push(inputs);
+                        SettingsApp::create_style_inputs(&entry, window, cx);
+                    app.styles.push(inputs);
                     app._subscriptions.extend(subs);
                 }
                 cx.notify();
@@ -1074,26 +1422,20 @@ mod tests {
         });
 
         cx.read_entity(&view, |app, _| {
-            assert_eq!(app.app_overrides.len(), 2);
+            assert_eq!(app.styles.len(), initial_count + 2);
         });
 
         // Remove the first one
         cx.update_entity(&view, |app, cx| {
-            app.app_overrides.remove(0);
+            app.styles.remove(0);
             cx.notify();
         });
 
         cx.read_entity(&view, |app, _| {
-            assert_eq!(app.app_overrides.len(), 1);
+            assert_eq!(app.styles.len(), initial_count + 1);
         });
     }
 
-    #[test]
-    fn test_settings_pane_labels() {
-        assert_eq!(SettingsPane::Models.label(), "Models");
-        assert_eq!(SettingsPane::AppPrompts.label(), "App Prompts");
-        assert_eq!(SettingsPane::General.label(), "General");
-    }
 
     // ---- Backend / text-input pipeline tests --------------------------------
     // These exercise the code paths that run when a user types into an Input:

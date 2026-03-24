@@ -53,12 +53,25 @@ struct ChatChoice {
 impl super::LlmProvider for OpenAiLlmProvider {
     async fn clean(&self, raw_text: &str, context: &CleanupContext) -> Result<String> {
         let user_prompt = build_user_prompt(raw_text, context);
+
+        // Use the style's prompt if the target app matches, otherwise default
+        let system_prompt = if let Some(target) = &context.target_app {
+            self.prompt
+                .styles
+                .iter()
+                .find(|s| s.apps.iter().any(|a| a.eq_ignore_ascii_case(target)))
+                .map(|s| s.prompt.as_str())
+                .unwrap_or(&self.prompt.system)
+        } else {
+            &self.prompt.system
+        };
+
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
-                    content: self.prompt.system.clone(),
+                    content: system_prompt.to_string(),
                 },
                 ChatMessage {
                     role: "user".to_string(),

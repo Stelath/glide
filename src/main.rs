@@ -25,6 +25,9 @@ fn main() {
 
     let runtime = Arc::new(Runtime::new().expect("failed to start async runtime"));
 
+    // Pre-extract app icons in background so the picker popover opens instantly
+    crate::config::preload_app_icons();
+
     let app = Application::new().with_assets(gpui_component_assets::Assets);
     app.run(move |cx| {
         gpui_component::init(cx);
