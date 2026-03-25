@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{audio::AudioFormat, config::{GlideConfig, Provider}};
+use crate::{audio::AudioFormat, config::{Provider, ProvidersConfig}};
 
 mod openai;
 
@@ -10,11 +10,15 @@ pub trait SttProvider: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-pub fn build_provider(config: &GlideConfig) -> Result<Box<dyn SttProvider>> {
-    match config.stt.provider {
+pub fn build_provider(
+    provider: Provider,
+    model: &str,
+    providers: &ProvidersConfig,
+) -> Result<Box<dyn SttProvider>> {
+    match provider {
         // Both OpenAI and Groq use the OpenAI-compatible API format
         Provider::OpenAi | Provider::Groq => {
-            Ok(Box::new(openai::OpenAiSttProvider::new(config.clone())?))
+            Ok(Box::new(openai::OpenAiSttProvider::new(provider, model, providers)?))
         }
     }
 }

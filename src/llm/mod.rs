@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::config::{GlideConfig, LlmProviderKind};
+use crate::config::{Provider, ProvidersConfig};
 
 mod openai;
 
@@ -16,12 +16,16 @@ pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-pub fn build_provider(config: &GlideConfig) -> Result<Option<Box<dyn LlmProvider>>> {
-    match config.llm.provider {
-        LlmProviderKind::None => Ok(None),
+pub fn build_provider(
+    provider: Provider,
+    model: &str,
+    system_prompt: &str,
+    providers: &ProvidersConfig,
+) -> Result<Box<dyn LlmProvider>> {
+    match provider {
         // Both OpenAI and Groq use the OpenAI-compatible API format
-        LlmProviderKind::OpenAi | LlmProviderKind::Groq => {
-            Ok(Some(Box::new(openai::OpenAiLlmProvider::new(config.clone())?)))
+        Provider::OpenAi | Provider::Groq => {
+            Ok(Box::new(openai::OpenAiLlmProvider::new(provider, model, system_prompt, providers)?))
         }
     }
 }

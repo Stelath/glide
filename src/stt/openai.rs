@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     audio::AudioFormat,
-    config::GlideConfig,
+    config::{Provider, ProvidersConfig},
 };
 
 pub struct OpenAiSttProvider {
@@ -15,17 +15,14 @@ pub struct OpenAiSttProvider {
 }
 
 impl OpenAiSttProvider {
-    pub fn new(config: GlideConfig) -> Result<Self> {
-        let provider = config.stt.provider;
-        let creds = config.providers.credentials_for(provider);
+    pub fn new(provider: Provider, model: &str, providers: &ProvidersConfig) -> Result<Self> {
+        let creds = providers.credentials_for(provider);
         let api_key = creds.resolve_api_key("speech-to-text")?;
         let endpoint = provider.stt_endpoint(&creds.base_url);
-        let default_model = config.llm.prompt.default_stt_model.clone();
-
         Ok(Self {
             client: Client::new(),
             endpoint,
-            default_model,
+            default_model: model.to_string(),
             api_key,
         })
     }

@@ -1,9 +1,43 @@
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
 use crate::{audio, config::GlideConfig};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayPhase {
+    Hidden,
+    Recording,
+    Processing,
+    Dismissed,
+}
+
+impl OverlayPhase {
+    fn to_u8(self) -> u8 {
+        match self {
+            Self::Hidden => 0,
+            Self::Recording => 1,
+            Self::Processing => 2,
+            Self::Dismissed => 3,
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Recording,
+            2 => Self::Processing,
+            3 => Self::Dismissed,
+            _ => Self::Hidden,
+        }
+    }
+}
+
+pub struct LiveAudioData {
+    pub ring: Vec<f32>,
+    pub write_pos: usize,
+    pub sample_rate: u32,
+}
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -15,6 +49,8 @@ pub struct AppSnapshot {
     pub last_error: Option<String>,
     pub input_devices: Vec<String>,
     pub permission_hint: String,
+    pub overlay_phase: OverlayPhase,
+    pub frontmost_app: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +75,6 @@ impl RuntimeStatus {
     }
 }
 
-#[derive(Debug)]
 pub struct SharedAppState {
     inner: Mutex<AppState>,
     /// When true, the CGEventTap will capture the next keycode for hotkey recording.
@@ -48,9 +83,14 @@ pub struct SharedAppState {
     recorded_keycode: AtomicU16,
     /// Set to true once a keycode has been recorded.
     keycode_ready: AtomicBool,
+    /// Current overlay lifecycle phase (atomic for lock-free cross-thread access).
+    overlay_phase: AtomicU8,
+    /// Live audio ring buffer shared between the audio callback and overlay renderer.
+    live_audio: Mutex<Option<Arc<Mutex<LiveAudioData>>>>,
+    /// Name of the frontmost application when the hotkey was pressed.
+    frontmost_app: Mutex<Option<String>>,
 }
 
-#[derive(Debug)]
 struct AppState {
     config: GlideConfig,
     status: RuntimeStatus,
@@ -76,6 +116,9 @@ impl SharedAppState {
             hotkey_recording: AtomicBool::new(false),
             recorded_keycode: AtomicU16::new(0),
             keycode_ready: AtomicBool::new(false),
+            overlay_phase: AtomicU8::new(OverlayPhase::Hidden.to_u8()),
+            live_audio: Mutex::new(None),
+            frontmost_app: Mutex::new(None),
         }
     }
 
@@ -112,6 +155,8 @@ impl SharedAppState {
             last_error: state.last_error.clone(),
             input_devices: state.input_devices.clone(),
             permission_hint: state.permission_hint.clone(),
+            overlay_phase: self.overlay_phase(),
+            frontmost_app: self.frontmost_app.lock().expect("frontmost_app poisoned").clone(),
         }
     }
 
@@ -172,6 +217,30 @@ impl SharedAppState {
         let mut state = self.inner.lock().expect("state poisoned");
         state.last_transcript = transcript;
     }
+
+    pub fn set_overlay_phase(&self, phase: OverlayPhase) {
+        self.overlay_phase.store(phase.to_u8(), Ordering::SeqCst);
+    }
+
+    pub fn overlay_phase(&self) -> OverlayPhase {
+        OverlayPhase::from_u8(self.overlay_phase.load(Ordering::SeqCst))
+    }
+
+    pub fn set_frontmost_app(&self, app: Option<String>) {
+        *self.frontmost_app.lock().expect("frontmost_app poisoned") = app;
+    }
+
+    pub fn frontmost_app(&self) -> Option<String> {
+        self.frontmost_app.lock().expect("frontmost_app poisoned").clone()
+    }
+
+    pub fn set_live_audio(&self, data: Option<Arc<Mutex<LiveAudioData>>>) {
+        *self.live_audio.lock().expect("live_audio poisoned") = data;
+    }
+
+    pub fn live_audio(&self) -> Option<Arc<Mutex<LiveAudioData>>> {
+        self.live_audio.lock().expect("live_audio poisoned").clone()
+    }
 }
 
 pub type SharedState = Arc<SharedAppState>;
@@ -193,6 +262,8 @@ mod tests {
         assert!(snap.last_transcript.is_empty());
         assert!(snap.last_error.is_none());
         assert!(snap.permission_hint.is_empty());
+        assert_eq!(snap.overlay_phase, OverlayPhase::Hidden);
+        assert!(snap.frontmost_app.is_none());
     }
 
     #[test]
@@ -258,5 +329,52 @@ mod tests {
         for status in statuses {
             assert!(!status.label().is_empty());
         }
+    }
+
+    #[test]
+    fn test_overlay_phase_transitions() {
+        let state = make_state();
+        assert_eq!(state.overlay_phase(), OverlayPhase::Hidden);
+
+        state.set_overlay_phase(OverlayPhase::Recording);
+        assert_eq!(state.overlay_phase(), OverlayPhase::Recording);
+
+        state.set_overlay_phase(OverlayPhase::Processing);
+        assert_eq!(state.overlay_phase(), OverlayPhase::Processing);
+
+        state.set_overlay_phase(OverlayPhase::Dismissed);
+        assert_eq!(state.overlay_phase(), OverlayPhase::Dismissed);
+
+        state.set_overlay_phase(OverlayPhase::Hidden);
+        assert_eq!(state.overlay_phase(), OverlayPhase::Hidden);
+    }
+
+    #[test]
+    fn test_frontmost_app() {
+        let state = make_state();
+        assert!(state.frontmost_app().is_none());
+
+        state.set_frontmost_app(Some("Safari".to_string()));
+        assert_eq!(state.frontmost_app().as_deref(), Some("Safari"));
+
+        state.set_frontmost_app(None);
+        assert!(state.frontmost_app().is_none());
+    }
+
+    #[test]
+    fn test_live_audio() {
+        let state = make_state();
+        assert!(state.live_audio().is_none());
+
+        let data = Arc::new(Mutex::new(LiveAudioData {
+            ring: vec![0.0; 8192],
+            write_pos: 0,
+            sample_rate: 16000,
+        }));
+        state.set_live_audio(Some(data.clone()));
+        assert!(state.live_audio().is_some());
+
+        state.set_live_audio(None);
+        assert!(state.live_audio().is_none());
     }
 }

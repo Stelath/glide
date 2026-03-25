@@ -15,7 +15,7 @@ use gpui_component::ActiveTheme;
 use gpui_component::Side;
 
 use crate::app::{AppSnapshot, SharedState};
-use crate::config::{GlideConfig, HotkeyTrigger, OverlayStyle, Provider, Style, ThemePreference};
+use crate::config::{GlideConfig, HotkeyTrigger, ModelSelection, OverlayStyle, Provider, Style, ThemePreference};
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(800);
 
@@ -106,7 +106,7 @@ impl SettingsApp {
         let default_prompt = cx.new(|cx| {
             InputState::new(window, cx)
                 .auto_grow(3, 12)
-                .default_value(&config.llm.prompt.system)
+                .default_value(&config.dictation.system_prompt)
         });
         let default_stt_search = cx.new(|cx| InputState::new(window, cx));
         let default_llm_search = cx.new(|cx| InputState::new(window, cx));
@@ -120,8 +120,7 @@ impl SettingsApp {
         ];
 
         let styles: Vec<_> = config
-            .llm
-            .prompt
+            .dictation
             .styles
             .iter()
             .map(|entry| {
@@ -253,17 +252,17 @@ impl SettingsApp {
         config.providers.groq.base_url =
             self.groq_inputs.base_url.read(cx).value().to_string();
 
-        config.llm.prompt.system = self.default_prompt.read(cx).value().to_string();
+        config.dictation.system_prompt = self.default_prompt.read(cx).value().to_string();
 
-        config.llm.prompt.styles = self
+        config.dictation.styles = self
             .styles
             .iter()
             .map(|s| Style {
                 name: s.name.read(cx).value().to_string(),
                 apps: s.apps.clone(),
                 prompt: s.prompt.read(cx).value().to_string(),
-                stt_model: None,
-                llm_model: None,
+                stt: None,
+                llm: None,
             })
             .collect();
 
@@ -466,8 +465,11 @@ impl SettingsApp {
 
         // -- Default Prompt & Models -------------------------------------------
         let snapshot = self.shared.snapshot();
-        let default_stt = snapshot.config.llm.prompt.default_stt_model.clone();
-        let default_llm = snapshot.config.llm.prompt.default_llm_model.clone();
+        let default_stt = snapshot.config.dictation.stt.model.clone();
+        let default_llm = snapshot.config.dictation.llm
+            .as_ref()
+            .map(|s| s.model.clone())
+            .unwrap_or_else(|| "Disabled".to_string());
         let stt_models = crate::config::cached_stt_models();
         let llm_models = crate::config::cached_llm_models();
 
@@ -493,8 +495,8 @@ impl SettingsApp {
                                         &stt_models,
                                         shared_stt,
                                         self.default_stt_search.clone(),
-                                        |config, model| {
-                                            config.llm.prompt.default_stt_model = model;
+                                        |config, model, provider| {
+                                            config.dictation.stt = ModelSelection { provider, model };
                                         },
                                     ),
                                 ),
@@ -508,8 +510,8 @@ impl SettingsApp {
                                         &llm_models,
                                         shared_llm,
                                         self.default_llm_search.clone(),
-                                        |config, model| {
-                                            config.llm.prompt.default_llm_model = model;
+                                        |config, model, provider| {
+                                            config.dictation.llm = Some(ModelSelection { provider, model });
                                         },
                                     ),
                                 ),
@@ -629,10 +631,13 @@ impl SettingsApp {
                     );
                 }
 
-                // App picker popover
-                let apps_for_filter = apps.clone();
+                // App picker popover — exclude apps assigned to ANY style (uniqueness)
+                let snap = self.shared.snapshot();
+                let all_assigned: std::collections::HashSet<String> = snap.config.dictation.styles.iter()
+                    .flat_map(|s| s.apps.iter().cloned())
+                    .collect();
                 let popover_apps: Vec<String> = available_apps.iter()
-                    .filter(|a| !apps_for_filter.contains(a)).cloned().collect();
+                    .filter(|a| !all_assigned.contains(*a)).cloned().collect();
                 let entity_for_apps = cx.weak_entity();
                 let search_entity = style.search.clone();
                 let add_app_popover = Popover::new(SharedString::from(format!("app-picker-{index}")))
@@ -695,19 +700,17 @@ impl SettingsApp {
                 let name_input = Input::new(&style.name).appearance(false);
 
                 // Per-style model overrides
-                let cfg_styles = &snapshot.config.llm.prompt.styles;
-                let has_stt = cfg_styles.get(index).and_then(|s| s.stt_model.as_ref()).is_some();
-                let has_llm = cfg_styles.get(index).and_then(|s| s.llm_model.as_ref()).is_some();
-                let stt_display = if has_stt {
-                    cfg_styles[index].stt_model.clone().unwrap()
-                } else {
-                    format!("Default ({})", default_stt)
-                };
-                let llm_display = if has_llm {
-                    cfg_styles[index].llm_model.clone().unwrap()
-                } else {
-                    format!("Default ({})", default_llm)
-                };
+                let cfg_styles = &snapshot.config.dictation.styles;
+                let stt_display = cfg_styles
+                    .get(index)
+                    .and_then(|s| s.stt.as_ref())
+                    .map(|sel| sel.model.clone())
+                    .unwrap_or_else(|| format!("Default ({})", default_stt));
+                let llm_display = cfg_styles
+                    .get(index)
+                    .and_then(|s| s.llm.as_ref())
+                    .map(|sel| sel.model.clone())
+                    .unwrap_or_else(|| format!("Default ({})", default_llm));
 
                 Some(
                     div()
@@ -785,8 +788,8 @@ impl SettingsApp {
                             name: format!("Style {style_num}"),
                             apps: Vec::new(),
                             prompt: default_prompt,
-                            stt_model: None,
-                            llm_model: None,
+                            stt: None,
+                            llm: None,
                         };
                         let (inputs, subs) =
                             Self::create_style_inputs(&entry, window, cx);
@@ -1320,7 +1323,7 @@ fn model_dropdown_button(
     models: &[crate::config::ModelInfo],
     shared: SharedState,
     search_entity: Entity<InputState>,
-    updater: fn(&mut GlideConfig, String),
+    updater: fn(&mut GlideConfig, String, Provider),
 ) -> gpui::Div {
     let current_logo = models
         .iter()
@@ -1358,14 +1361,17 @@ fn model_dropdown_button(
             let mut list = div().flex().flex_col().gap_0p5().p_1();
             for model in &filtered {
                 let model_id = model.id.clone();
+                let model_provider_str = model.provider.clone();
                 let shared = shared.clone();
                 let popover = popover.clone();
                 list = list.child(
                     model_picker_item(model, &cwd, cx).on_click(
                         move |_, window, cx| {
                             let id = model_id.clone();
+                            let provider = crate::config::Provider::from_model_info_provider(&model_provider_str)
+                                .unwrap_or(crate::config::Provider::OpenAi);
                             let _ = shared.update_config(|config| {
-                                updater(config, id);
+                                updater(config, id, provider);
                             });
                             popover.update(cx, |state, cx| {
                                 state.dismiss(window, cx);
@@ -1480,11 +1486,11 @@ fn style_model_dropdown(
                 .child("Default (use global)")
                 .on_click(move |_, window, cx| {
                     let _ = shared_default.update_config(|config| {
-                        if let Some(style) = config.llm.prompt.styles.get_mut(style_index) {
+                        if let Some(style) = config.dictation.styles.get_mut(style_index) {
                             if is_stt {
-                                style.stt_model = None;
+                                style.stt = None;
                             } else {
-                                style.llm_model = None;
+                                style.llm = None;
                             }
                         }
                     });
@@ -1496,20 +1502,24 @@ fn style_model_dropdown(
             let mut list = div().flex().flex_col().gap_0p5().p_1().child(default_item);
             for model in &filtered {
                 let model_id = model.id.clone();
+                let model_provider_str_style = model.provider.clone();
                 let shared = shared.clone();
                 let popover = popover.clone();
                 list = list.child(
                     model_picker_item(model, &cwd, cx).on_click(
                         move |_, window, cx| {
                             let id = model_id.clone();
+                            let model_provider = model_provider_str_style.clone();
                             let _ = shared.update_config(|config| {
+                                let provider = crate::config::Provider::from_model_info_provider(&model_provider)
+                                    .unwrap_or(crate::config::Provider::OpenAi);
                                 if let Some(style) =
-                                    config.llm.prompt.styles.get_mut(style_index)
+                                    config.dictation.styles.get_mut(style_index)
                                 {
                                     if is_stt {
-                                        style.stt_model = Some(id);
+                                        style.stt = Some(ModelSelection { provider, model: id });
                                     } else {
-                                        style.llm_model = Some(id);
+                                        style.llm = Some(ModelSelection { provider, model: id });
                                     }
                                 }
                             });
@@ -1643,7 +1653,7 @@ mod tests {
                 draft.providers.openai.base_url,
                 defaults.providers.openai.base_url,
             );
-            assert_eq!(draft.llm.prompt.system, defaults.llm.prompt.system);
+            assert_eq!(draft.dictation.system_prompt, defaults.dictation.system_prompt);
         });
     }
 
@@ -1697,8 +1707,8 @@ mod tests {
                     name: "TestApp".to_string(),
                     apps: vec![],
                     prompt: "test prompt".to_string(),
-                    stt_model: None,
-                    llm_model: None,
+                    stt: None,
+                    llm: None,
                 };
                 let (inputs, subs) =
                     SettingsApp::create_style_inputs(&entry, window, cx);
@@ -1727,8 +1737,8 @@ mod tests {
                         name: name.to_string(),
                         apps: vec![],
                         prompt: "prompt".to_string(),
-                        stt_model: None,
-                        llm_model: None,
+                        stt: None,
+                        llm: None,
                     };
                     let (inputs, subs) =
                         SettingsApp::create_style_inputs(&entry, window, cx);

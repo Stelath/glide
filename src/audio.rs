@@ -6,7 +6,10 @@ use cpal::{
     Device, SampleFormat, Stream, StreamConfig,
 };
 
+use crate::app::LiveAudioData;
 use crate::config::AudioConfig;
+
+const RING_BUFFER_SIZE: usize = 8192;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AudioFormat {
@@ -28,6 +31,8 @@ struct ActiveRecording {
     stream: Stream,
     samples: Arc<Mutex<Vec<i16>>>,
     sample_rate: u32,
+    #[allow(dead_code)] // Kept alive so the overlay can read it via SharedAppState
+    live_audio: Arc<Mutex<LiveAudioData>>,
 }
 
 impl AudioRecorder {
@@ -35,7 +40,7 @@ impl AudioRecorder {
         Self { active: None }
     }
 
-    pub fn start(&mut self, config: &AudioConfig) -> Result<()> {
+    pub fn start(&mut self, config: &AudioConfig) -> Result<Arc<Mutex<LiveAudioData>>> {
         anyhow::ensure!(self.active.is_none(), "recording already in progress");
 
         let device = resolve_input_device(config)?;
@@ -52,7 +57,13 @@ impl AudioRecorder {
         };
 
         let samples = Arc::new(Mutex::new(Vec::new()));
+        let live_audio = Arc::new(Mutex::new(LiveAudioData {
+            ring: vec![0.0; RING_BUFFER_SIZE],
+            write_pos: 0,
+            sample_rate,
+        }));
         let capture_target = samples.clone();
+        let live_target = live_audio.clone();
         let channels = stream_config.channels;
 
         let error_callback = |error| {
@@ -62,22 +73,28 @@ impl AudioRecorder {
         let stream = match supported.sample_format() {
             SampleFormat::I16 => device.build_input_stream(
                 &stream_config,
-                move |data: &[i16], _| push_i16_frames(data, channels, &capture_target),
+                move |data: &[i16], _| push_i16_frames(data, channels, &capture_target, &live_target),
                 error_callback,
                 None,
             )?,
-            SampleFormat::U16 => device.build_input_stream(
-                &stream_config,
-                move |data: &[u16], _| push_u16_frames(data, channels, &capture_target),
-                error_callback,
-                None,
-            )?,
-            SampleFormat::F32 => device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _| push_f32_frames(data, channels, &capture_target),
-                error_callback,
-                None,
-            )?,
+            SampleFormat::U16 => {
+                let live_target = live_audio.clone();
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[u16], _| push_u16_frames(data, channels, &capture_target, &live_target),
+                    error_callback,
+                    None,
+                )?
+            }
+            SampleFormat::F32 => {
+                let live_target = live_audio.clone();
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _| push_f32_frames(data, channels, &capture_target, &live_target),
+                    error_callback,
+                    None,
+                )?
+            }
             other => anyhow::bail!("unsupported sample format: {other:?}"),
         };
 
@@ -87,9 +104,10 @@ impl AudioRecorder {
             stream,
             samples,
             sample_rate,
+            live_audio: live_audio.clone(),
         });
 
-        Ok(())
+        Ok(live_audio)
     }
 
     pub fn stop(&mut self) -> Result<RecordedAudio> {
@@ -162,33 +180,54 @@ fn resolve_input_device(config: &AudioConfig) -> Result<Device> {
         .with_context(|| format!("input device '{}' was not found", config.device))
 }
 
-fn push_i16_frames(data: &[i16], channels: u16, target: &Arc<Mutex<Vec<i16>>>) {
+fn push_i16_frames(
+    data: &[i16],
+    channels: u16,
+    target: &Arc<Mutex<Vec<i16>>>,
+    live: &Arc<Mutex<LiveAudioData>>,
+) {
     let mut samples = target.lock().expect("samples poisoned");
+    let mut live = live.lock().expect("live audio poisoned");
     push_frames(
         data.len(),
         usize::from(channels),
         |index| data[index] as f32 / i16::MAX as f32,
         &mut samples,
+        &mut live,
     );
 }
 
-fn push_u16_frames(data: &[u16], channels: u16, target: &Arc<Mutex<Vec<i16>>>) {
+fn push_u16_frames(
+    data: &[u16],
+    channels: u16,
+    target: &Arc<Mutex<Vec<i16>>>,
+    live: &Arc<Mutex<LiveAudioData>>,
+) {
     let mut samples = target.lock().expect("samples poisoned");
+    let mut live = live.lock().expect("live audio poisoned");
     push_frames(
         data.len(),
         usize::from(channels),
         |index| (data[index] as f32 / u16::MAX as f32) * 2.0 - 1.0,
         &mut samples,
+        &mut live,
     );
 }
 
-fn push_f32_frames(data: &[f32], channels: u16, target: &Arc<Mutex<Vec<i16>>>) {
+fn push_f32_frames(
+    data: &[f32],
+    channels: u16,
+    target: &Arc<Mutex<Vec<i16>>>,
+    live: &Arc<Mutex<LiveAudioData>>,
+) {
     let mut samples = target.lock().expect("samples poisoned");
+    let mut live = live.lock().expect("live audio poisoned");
     push_frames(
         data.len(),
         usize::from(channels),
         |index| data[index],
         &mut samples,
+        &mut live,
     );
 }
 
@@ -197,10 +236,13 @@ fn push_frames(
     channels: usize,
     sample_at: impl Fn(usize) -> f32,
     target: &mut Vec<i16>,
+    live: &mut LiveAudioData,
 ) {
     if channels == 0 {
         return;
     }
+
+    let ring_len = live.ring.len();
 
     for frame_start in (0..len).step_by(channels) {
         let mut total = 0.0f32;
@@ -221,6 +263,10 @@ fn push_frames(
 
         let averaged = (total / seen as f32).clamp(-1.0, 1.0);
         target.push((averaged * i16::MAX as f32) as i16);
+
+        // Also write to the live ring buffer for the overlay EQ
+        live.ring[live.write_pos % ring_len] = averaged;
+        live.write_pos = live.write_pos.wrapping_add(1);
     }
 }
 
@@ -229,45 +275,55 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
+    fn make_live() -> LiveAudioData {
+        LiveAudioData {
+            ring: vec![0.0; RING_BUFFER_SIZE],
+            write_pos: 0,
+            sample_rate: 16000,
+        }
+    }
+
     #[test]
     fn test_push_frames_single_channel() {
         let mut target = Vec::new();
-        push_frames(3, 1, |i| [0.5, -0.5, 0.0][i], &mut target);
+        let mut live = make_live();
+        push_frames(3, 1, |i| [0.5, -0.5, 0.0][i], &mut target, &mut live);
         assert_eq!(target.len(), 3);
-        // 0.5 * 32767 ≈ 16383
         assert_eq!(target[0], (0.5f32 * i16::MAX as f32) as i16);
         assert_eq!(target[1], (-0.5f32 * i16::MAX as f32) as i16);
         assert_eq!(target[2], 0);
+        // Ring buffer should also have the samples
+        assert_eq!(live.write_pos, 3);
+        assert!((live.ring[0] - 0.5).abs() < 0.001);
     }
 
     #[test]
     fn test_push_frames_stereo_averages() {
         let mut target = Vec::new();
-        // Two frames: [0.4, 0.6] and [1.0, -1.0]
+        let mut live = make_live();
         let data = [0.4f32, 0.6, 1.0, -1.0];
-        push_frames(4, 2, |i| data[i], &mut target);
+        push_frames(4, 2, |i| data[i], &mut target, &mut live);
         assert_eq!(target.len(), 2);
-        // First frame average: (0.4+0.6)/2 = 0.5
         assert_eq!(target[0], (0.5f32 * i16::MAX as f32) as i16);
-        // Second frame average: (1.0+(-1.0))/2 = 0.0
         assert_eq!(target[1], 0);
     }
 
     #[test]
     fn test_push_frames_zero_channels() {
         let mut target = Vec::new();
-        push_frames(4, 0, |_| 0.0, &mut target);
+        let mut live = make_live();
+        push_frames(4, 0, |_| 0.0, &mut target, &mut live);
         assert!(target.is_empty());
     }
 
     #[test]
     fn test_push_i16_frames() {
         let target = Arc::new(Mutex::new(Vec::new()));
+        let live = Arc::new(Mutex::new(make_live()));
         let data: Vec<i16> = vec![i16::MAX, i16::MIN];
-        push_i16_frames(&data, 1, &target);
+        push_i16_frames(&data, 1, &target, &live);
         let samples = target.lock().unwrap();
         assert_eq!(samples.len(), 2);
-        // i16::MAX normalized to 1.0 then back
         assert!(samples[0] > 0);
         assert!(samples[1] < 0);
     }
@@ -275,20 +331,20 @@ mod tests {
     #[test]
     fn test_push_u16_frames() {
         let target = Arc::new(Mutex::new(Vec::new()));
-        // u16 midpoint (32768) should map to ~0.0
+        let live = Arc::new(Mutex::new(make_live()));
         let data: Vec<u16> = vec![u16::MAX / 2];
-        push_u16_frames(&data, 1, &target);
+        push_u16_frames(&data, 1, &target, &live);
         let samples = target.lock().unwrap();
         assert_eq!(samples.len(), 1);
-        // Midpoint maps to near zero
         assert!(samples[0].abs() < 1000);
     }
 
     #[test]
     fn test_push_f32_frames() {
         let target = Arc::new(Mutex::new(Vec::new()));
+        let live = Arc::new(Mutex::new(make_live()));
         let data: Vec<f32> = vec![0.0, 1.0, -1.0];
-        push_f32_frames(&data, 1, &target);
+        push_f32_frames(&data, 1, &target, &live);
         let samples = target.lock().unwrap();
         assert_eq!(samples.len(), 3);
         assert_eq!(samples[0], 0);
@@ -299,10 +355,27 @@ mod tests {
     #[test]
     fn test_push_frames_clamps() {
         let mut target = Vec::new();
-        // Values beyond [-1, 1] should be clamped
-        push_frames(2, 1, |i| [2.0f32, -2.0][i], &mut target);
+        let mut live = make_live();
+        push_frames(2, 1, |i| [2.0f32, -2.0][i], &mut target, &mut live);
         assert_eq!(target.len(), 2);
         assert_eq!(target[0], i16::MAX);
         assert_eq!(target[1], (-1.0f32 * i16::MAX as f32) as i16);
+    }
+
+    #[test]
+    fn test_ring_buffer_wraps() {
+        let mut target = Vec::new();
+        let mut live = LiveAudioData {
+            ring: vec![0.0; 4], // tiny ring for testing wrap
+            write_pos: 0,
+            sample_rate: 16000,
+        };
+        // Write 6 samples into a ring of 4
+        push_frames(6, 1, |_| 0.5, &mut target, &mut live);
+        assert_eq!(live.write_pos, 6);
+        assert_eq!(target.len(), 6);
+        // Positions 4 and 5 should have wrapped to indices 0 and 1
+        assert!((live.ring[0] - 0.5).abs() < 0.001);
+        assert!((live.ring[1] - 0.5).abs() < 0.001);
     }
 }

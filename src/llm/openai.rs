@@ -2,32 +2,28 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{GlideConfig, PromptConfig};
+use crate::config::{Provider, ProvidersConfig};
 
 use super::CleanupContext;
 
 pub struct OpenAiLlmProvider {
     client: Client,
     endpoint: String,
-    prompt: PromptConfig,
+    model: String,
+    system_prompt: String,
     api_key: String,
 }
 
 impl OpenAiLlmProvider {
-    pub fn new(config: GlideConfig) -> Result<Self> {
-        let provider = config
-            .llm
-            .provider
-            .to_provider()
-            .context("LLM provider is disabled")?;
-        let creds = config.providers.credentials_for(provider);
+    pub fn new(provider: Provider, model: &str, system_prompt: &str, providers: &ProvidersConfig) -> Result<Self> {
+        let creds = providers.credentials_for(provider);
         let api_key = creds.resolve_api_key("LLM")?;
         let endpoint = provider.llm_endpoint(&creds.base_url);
-
         Ok(Self {
             client: Client::new(),
             endpoint,
-            prompt: config.llm.prompt.clone(),
+            model: model.to_string(),
+            system_prompt: system_prompt.to_string(),
             api_key,
         })
     }
@@ -60,27 +56,12 @@ impl super::LlmProvider for OpenAiLlmProvider {
     async fn clean(&self, raw_text: &str, context: &CleanupContext) -> Result<String> {
         let user_prompt = build_user_prompt(raw_text, context);
 
-        // Find matching style for target app
-        let matched_style = context.target_app.as_ref().and_then(|target| {
-            self.prompt.styles.iter().find(|s| {
-                s.apps.iter().any(|a| a.eq_ignore_ascii_case(target))
-            })
-        });
-
-        let system_prompt = matched_style
-            .map(|s| s.prompt.as_str())
-            .unwrap_or(&self.prompt.system);
-
-        let model = matched_style
-            .and_then(|s| s.llm_model.as_deref())
-            .unwrap_or(&self.prompt.default_llm_model);
-
         let request = ChatCompletionRequest {
-            model: model.to_string(),
+            model: self.model.clone(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
-                    content: system_prompt.to_string(),
+                    content: self.system_prompt.clone(),
                 },
                 ChatMessage {
                     role: "user".to_string(),

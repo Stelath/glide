@@ -224,12 +224,21 @@ fn handle_press(ctx: &mut TapContext) {
         return;
     }
 
+    // Detect frontmost app before recording starts (before overlay could steal focus)
+    let frontmost = crate::config::frontmost_app_name();
+    ctx.shared.set_frontmost_app(frontmost);
+
     let config = ctx.shared.config();
     match ctx.recorder.start(&config.audio) {
-        Ok(()) => ctx.shared.set_status(
-            RuntimeStatus::Recording,
-            "Listening... release hotkey to transcribe",
-        ),
+        Ok(live_audio) => {
+            ctx.shared.set_live_audio(Some(live_audio));
+            ctx.shared.set_status(
+                RuntimeStatus::Recording,
+                "Listening... release hotkey to transcribe",
+            );
+            ctx.shared
+                .set_overlay_phase(crate::app::OverlayPhase::Recording);
+        }
         Err(error) => {
             ctx.pressed = false;
             ctx.shared
@@ -241,22 +250,38 @@ fn handle_press(ctx: &mut TapContext) {
 fn handle_release(ctx: &mut TapContext) {
     ctx.pressed = false;
 
+    // Transition overlay to loading dots
+    ctx.shared
+        .set_overlay_phase(crate::app::OverlayPhase::Processing);
+    ctx.shared.set_live_audio(None);
+
     match ctx.recorder.stop() {
         Ok(audio) => {
             ctx.shared
                 .set_status(RuntimeStatus::Processing, "Uploading audio");
             let shared_clone = ctx.shared.clone();
+            let target_app = shared_clone.frontmost_app();
             ctx.runtime.spawn(async move {
-                if let Err(error) =
-                    pipeline::process_recording(shared_clone.clone(), audio).await
-                {
-                    shared_clone.set_error(error.to_string());
+                match pipeline::process_recording(shared_clone.clone(), audio, target_app).await {
+                    Ok(()) => {
+                        shared_clone
+                            .set_overlay_phase(crate::app::OverlayPhase::Dismissed);
+                    }
+                    Err(error) => {
+                        eprintln!("pipeline error: {error:#}");
+                        shared_clone.set_error(error.to_string());
+                        shared_clone
+                            .set_overlay_phase(crate::app::OverlayPhase::Dismissed);
+                    }
                 }
             });
         }
         Err(error) => {
+            eprintln!("recording stop error: {error:#}");
             ctx.shared
                 .set_error(format!("failed to finish recording: {error:#}"));
+            ctx.shared
+                .set_overlay_phase(crate::app::OverlayPhase::Dismissed);
         }
     }
 }

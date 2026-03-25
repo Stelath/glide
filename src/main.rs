@@ -3,6 +3,7 @@ mod audio;
 mod config;
 mod hotkey;
 mod llm;
+mod overlay;
 mod paste;
 mod permissions;
 mod pipeline;
@@ -40,8 +41,16 @@ fn main() {
 
         hotkey::start_listener(shared.clone(), runtime);
 
+        // Create overlay controller that opens/closes the EQ overlay on hotkey press/release
+        let overlay_shared = shared.clone();
+        let _overlay_controller = cx.new(|cx| {
+            let controller = overlay::OverlayController::new(overlay_shared);
+            controller.start_polling(cx);
+            controller
+        });
+
         let shared_for_window = shared.clone();
-        cx.open_window(
+        let settings_window = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::centered(
                     size(px(1000.0), px(650.0)),
@@ -59,8 +68,11 @@ fn main() {
         )
         .unwrap();
 
-        let _quit_sub = cx.on_window_closed(|cx| {
-            cx.quit();
+        // Only quit when the settings window closes, not when the overlay (PopUp) closes.
+        let _quit_sub = cx.on_window_closed(move |cx| {
+            if settings_window.update(cx, |_, _, _| {}).is_err() {
+                cx.quit();
+            }
         });
     });
 }

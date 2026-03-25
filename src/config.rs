@@ -13,8 +13,7 @@ pub struct GlideConfig {
     pub hotkey: HotkeyConfig,
     pub audio: AudioConfig,
     pub providers: ProvidersConfig,
-    pub stt: SttConfig,
-    pub llm: LlmConfig,
+    pub dictation: DictationConfig,
     pub overlay: OverlayConfig,
     pub paste: PasteConfig,
 }
@@ -26,8 +25,7 @@ impl Default for GlideConfig {
             hotkey: HotkeyConfig::default(),
             audio: AudioConfig::default(),
             providers: ProvidersConfig::default(),
-            stt: SttConfig::default(),
-            llm: LlmConfig::default(),
+            dictation: DictationConfig::default(),
             overlay: OverlayConfig::default(),
             paste: PasteConfig::default(),
         }
@@ -318,6 +316,14 @@ impl Provider {
     pub fn llm_endpoint(self, base: &str) -> String {
         format!("{}/chat/completions", base.trim_end_matches('/'))
     }
+
+    pub fn from_model_info_provider(s: &str) -> Option<Self> {
+        match s {
+            "OpenAI" => Some(Self::OpenAi),
+            "Groq" => Some(Self::Groq),
+            _ => None,
+        }
+    }
 }
 
 /// Unified provider credentials — one entry per provider, shared across STT and LLM.
@@ -386,66 +392,50 @@ impl ProviderCredentials {
     }
 }
 
-// --- STT config (just provider selection, no credentials) ---
+// --- Unified dictation config ---
 
+/// A provider + model pair. The fundamental unit of model selection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SttConfig {
+pub struct ModelSelection {
     pub provider: Provider,
+    pub model: String,
 }
 
-impl Default for SttConfig {
-    fn default() -> Self {
-        Self {
-            provider: Provider::OpenAi,
-        }
-    }
-}
-
-// --- LLM config (just provider selection + prompts, no credentials) ---
-
+/// All dictation-related settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct LlmConfig {
-    pub provider: LlmProviderKind,
-    pub prompt: PromptConfig,
+pub struct DictationConfig {
+    pub stt: ModelSelection,
+    pub llm: Option<ModelSelection>,
+    pub system_prompt: String,
+    pub styles: Vec<Style>,
 }
 
-impl Default for LlmConfig {
+impl Default for DictationConfig {
     fn default() -> Self {
         Self {
-            provider: LlmProviderKind::None,
-            prompt: PromptConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LlmProviderKind {
-    None,
-    OpenAi,
-    Groq,
-}
-
-impl LlmProviderKind {
-    #[allow(dead_code)]
-    pub const ALL: [Self; 3] = [Self::None, Self::OpenAi, Self::Groq];
-
-    #[allow(dead_code)]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::None => "Disabled",
-            Self::OpenAi => "OpenAI",
-            Self::Groq => "Groq",
-        }
-    }
-
-    pub fn to_provider(self) -> Option<Provider> {
-        match self {
-            Self::None => None,
-            Self::OpenAi => Some(Provider::OpenAi),
-            Self::Groq => Some(Provider::Groq),
+            stt: ModelSelection {
+                provider: Provider::OpenAi,
+                model: "whisper-1".to_string(),
+            },
+            llm: None,
+            system_prompt: "You are a dictation post-processor. You receive raw speech-to-text output and return clean text ready to be typed into an application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context or custom vocabulary, correct the spelling. Never insert names or terms from context that the speaker did not say.\n- Preserve the speaker's intent, tone, and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription. The context is only for correcting spelling of words already spoken.\n- Do not change the meaning of what was said.".to_string(),
+            styles: vec![
+                Style {
+                    name: "Professional".to_string(),
+                    apps: vec![],
+                    prompt: "You are a dictation post-processor for professional communication. You receive raw speech-to-text output and return clean, formal text ready to be typed into a work application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- Elevate the language to a professional, clear, and well-structured tone.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's intent and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
+                    stt: None,
+                    llm: None,
+                },
+                Style {
+                    name: "Messaging".to_string(),
+                    apps: vec![],
+                    prompt: "You are a dictation post-processor for casual messaging. You receive raw speech-to-text output and return clean, conversational text ready to be sent in a chat or text message.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning or add personality.\n- Fix obvious spelling and grammar errors, but keep the tone informal and natural.\n- Use casual punctuation\u{2014}lowercase is fine, fragments are OK.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's voice and conversational style exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
+                    stt: None,
+                    llm: None,
+                },
+            ],
         }
     }
 }
@@ -631,18 +621,6 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
     });
 }
 
-// --- Prompt / Style config ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PromptConfig {
-    pub default_stt_model: String,
-    pub default_llm_model: String,
-    pub system: String,
-    #[serde(alias = "app_overrides")]
-    pub styles: Vec<Style>,
-}
-
 /// A dictation style with a name, assigned apps, a custom system prompt,
 /// and optional model overrides.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -652,35 +630,9 @@ pub struct Style {
     pub apps: Vec<String>,
     pub prompt: String,
     #[serde(default)]
-    pub stt_model: Option<String>,
+    pub stt: Option<ModelSelection>,
     #[serde(default)]
-    pub llm_model: Option<String>,
-}
-
-impl Default for PromptConfig {
-    fn default() -> Self {
-        Self {
-            default_stt_model: "whisper-1".to_string(),
-            default_llm_model: "gpt-4o-mini".to_string(),
-            system: "You are a dictation post-processor. You receive raw speech-to-text output and return clean text ready to be typed into an application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context or custom vocabulary, correct the spelling. Never insert names or terms from context that the speaker did not say.\n- Preserve the speaker's intent, tone, and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription. The context is only for correcting spelling of words already spoken.\n- Do not change the meaning of what was said.".to_string(),
-            styles: vec![
-                Style {
-                    name: "Professional".to_string(),
-                    apps: vec![],
-                    prompt: "You are a dictation post-processor for professional communication. You receive raw speech-to-text output and return clean, formal text ready to be typed into a work application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- Elevate the language to a professional, clear, and well-structured tone.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's intent and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
-                    stt_model: None,
-                    llm_model: None,
-                },
-                Style {
-                    name: "Messaging".to_string(),
-                    apps: vec![],
-                    prompt: "You are a dictation post-processor for casual messaging. You receive raw speech-to-text output and return clean, conversational text ready to be sent in a chat or text message.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning or add personality.\n- Fix obvious spelling and grammar errors, but keep the tone informal and natural.\n- Use casual punctuation\u{2014}lowercase is fine, fragments are OK.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's voice and conversational style exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
-                    stt_model: None,
-                    llm_model: None,
-                },
-            ],
-        }
-    }
+    pub llm: Option<ModelSelection>,
 }
 
 /// List application names from /Applications (macOS).
@@ -873,6 +825,62 @@ pub fn fuzzy_match(query: &str, candidate: &str) -> Option<i32> {
     }
 }
 
+// --- Frontmost app detection via NSWorkspace ---
+
+/// Get the name of the currently frontmost (active) application.
+pub fn frontmost_app_name() -> Option<String> {
+    let msg1: MsgSendPtr = unsafe { std::mem::transmute(objc_msgSend as *const ()) };
+
+    unsafe {
+        let workspace_class = objc_getClass(b"NSWorkspace\0".as_ptr());
+        if workspace_class.is_null() {
+            return None;
+        }
+        let shared_sel = sel_registerName(b"sharedWorkspace\0".as_ptr());
+        let workspace = objc_msgSend(workspace_class, shared_sel);
+        if workspace.is_null() {
+            return None;
+        }
+
+        let frontmost_sel = sel_registerName(b"frontmostApplication\0".as_ptr());
+        let app = objc_msgSend(workspace, frontmost_sel);
+        if app.is_null() {
+            return None;
+        }
+
+        let name_sel = sel_registerName(b"localizedName\0".as_ptr());
+        let ns_name = objc_msgSend(app, name_sel);
+        if ns_name.is_null() {
+            return None;
+        }
+
+        let utf8_sel = sel_registerName(b"UTF8String\0".as_ptr());
+        let cstr_ptr = msg1(ns_name, utf8_sel, std::ptr::null_mut()) as *const i8;
+        if cstr_ptr.is_null() {
+            return None;
+        }
+
+        let name = std::ffi::CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned();
+        Some(name)
+    }
+}
+
+// --- Screen size FFI for overlay positioning ---
+
+unsafe extern "C" {
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayPixelsWide(display: u32) -> usize;
+    fn CGDisplayPixelsHigh(display: u32) -> usize;
+}
+
+/// Get the main display resolution in pixels.
+pub fn main_display_size() -> (usize, usize) {
+    unsafe {
+        let display = CGMainDisplayID();
+        (CGDisplayPixelsWide(display), CGDisplayPixelsHigh(display))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OverlayStyle {
@@ -1057,14 +1065,6 @@ mod tests {
         for pref in ThemePreference::ALL {
             assert!(!pref.label().is_empty());
         }
-    }
-
-    #[test]
-    fn test_llm_provider_variants() {
-        assert_eq!(LlmProviderKind::ALL.len(), 3);
-        assert_eq!(LlmProviderKind::None.label(), "Disabled");
-        assert_eq!(LlmProviderKind::OpenAi.label(), "OpenAI");
-        assert_eq!(LlmProviderKind::Groq.label(), "Groq");
     }
 
     #[test]
