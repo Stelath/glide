@@ -60,6 +60,7 @@ pub struct SettingsApp {
     active_pane: SettingsPane,
     sidebar_collapsed: bool,
     recording_hotkey: bool,
+    recording_toggle_hotkey: bool,
 
     openai_inputs: ProviderInputs,
     groq_inputs: ProviderInputs,
@@ -143,6 +144,7 @@ impl SettingsApp {
             active_pane: SettingsPane::General,
             sidebar_collapsed: false,
             recording_hotkey: false,
+            recording_toggle_hotkey: false,
             openai_inputs: ProviderInputs {
                 api_key: openai_api_key,
                 base_url: openai_base_url,
@@ -878,24 +880,43 @@ impl SettingsApp {
                 ),
         );
 
-        // -- Keyboard Shortcut ------------------------------------------
-        let hotkey_label = current_trigger.label();
+        // -- Keyboard Shortcuts ------------------------------------------
+        let hotkey_label = current_trigger
+            .map(|t| t.label())
+            .unwrap_or_else(|| "Not Set".to_string());
+        let toggle_trigger = snapshot.config.hotkey.toggle_trigger;
+        let toggle_label = toggle_trigger
+            .map(|t| t.label())
+            .unwrap_or_else(|| "Not Set".to_string());
 
         // Poll the CGEventTap for a recorded keycode (set by the background event tap thread)
         if self.recording_hotkey {
             if let Some(code) = self.shared.poll_recorded_keycode() {
                 let trigger = HotkeyTrigger::from_keycode(code);
                 let _ = self.shared.update_config(|config| {
-                    config.hotkey.trigger = trigger;
+                    config.hotkey.trigger = Some(trigger);
                 });
                 self.recording_hotkey = false;
                 self.schedule_autosave(cx);
                 cx.notify();
             }
         }
+        if self.recording_toggle_hotkey {
+            if let Some(code) = self.shared.poll_recorded_keycode() {
+                let trigger = HotkeyTrigger::from_keycode(code);
+                let _ = self.shared.update_config(|config| {
+                    config.hotkey.toggle_trigger = Some(trigger);
+                });
+                self.recording_toggle_hotkey = false;
+                self.schedule_autosave(cx);
+                cx.notify();
+            }
+        }
 
         let is_recording = self.recording_hotkey;
+        let is_recording_toggle = self.recording_toggle_hotkey;
 
+        // Dictation hotkey button
         let shortcut_button = if is_recording {
             Button::new("record-hotkey")
                 .label("Press a key...")
@@ -910,6 +931,39 @@ impl SettingsApp {
                 .ghost()
         };
 
+        // Toggle dictation button
+        let toggle_button = if is_recording_toggle {
+            Button::new("record-toggle-hotkey")
+                .label("Press a key...")
+                .small()
+                .compact()
+                .primary()
+        } else {
+            Button::new("record-toggle-hotkey")
+                .label(SharedString::from(toggle_label))
+                .small()
+                .compact()
+                .ghost()
+        };
+
+        fn start_hotkey_poll(cx: &mut gpui::Context<SettingsApp>, field: fn(&mut SettingsApp) -> &mut bool) {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    let still_recording = this
+                        .update(cx, |this, _| *field(this))
+                        .unwrap_or(false);
+                    if !still_recording {
+                        break;
+                    }
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                }
+            })
+            .detach();
+        }
+
         container = container.child(
             section_block("Keyboard Shortcuts", cx)
                 .child(
@@ -921,28 +975,61 @@ impl SettingsApp {
                                 cx,
                             )
                             .child(
-                                shortcut_button
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.shared.start_hotkey_recording();
-                                        this.recording_hotkey = true;
-                                        cx.notify();
-                                        // Poll for the recorded keycode every 50ms
-                                        cx.spawn(async move |this, cx| {
-                                            loop {
-                                                cx.background_executor()
-                                                    .timer(Duration::from_millis(50))
-                                                    .await;
-                                                let still_recording = this
-                                                    .update(cx, |this, _| this.recording_hotkey)
-                                                    .unwrap_or(false);
-                                                if !still_recording {
-                                                    break;
-                                                }
-                                                let _ = this.update(cx, |_, cx| cx.notify());
-                                            }
-                                        })
-                                        .detach();
-                                    })),
+                                div().flex().items_center().gap_1()
+                                    .child(
+                                        shortcut_button
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.shared.start_hotkey_recording();
+                                                this.recording_hotkey = true;
+                                                cx.notify();
+                                                start_hotkey_poll(cx, |s| &mut s.recording_hotkey);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("clear-hotkey")
+                                            .icon(IconName::CircleX)
+                                            .ghost()
+                                            .xsmall()
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                let _ = this.shared.update_config(|config| {
+                                                    config.hotkey.trigger = None;
+                                                });
+                                                this.schedule_autosave(cx);
+                                                cx.notify();
+                                            })),
+                                    ),
+                            ),
+                        )
+                        .child(
+                            setting_row(
+                                "Toggle Dictation",
+                                "Press once to start, press again to stop",
+                                cx,
+                            )
+                            .child(
+                                div().flex().items_center().gap_1()
+                                    .child(
+                                        toggle_button
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.shared.start_hotkey_recording();
+                                                this.recording_toggle_hotkey = true;
+                                                cx.notify();
+                                                start_hotkey_poll(cx, |s| &mut s.recording_toggle_hotkey);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("clear-toggle-hotkey")
+                                            .icon(IconName::CircleX)
+                                            .ghost()
+                                            .xsmall()
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                let _ = this.shared.update_config(|config| {
+                                                    config.hotkey.toggle_trigger = None;
+                                                });
+                                                this.schedule_autosave(cx);
+                                                cx.notify();
+                                            })),
+                                    ),
                             ),
                         ),
                 ),

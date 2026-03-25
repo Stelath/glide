@@ -1,5 +1,27 @@
 use anyhow::{Context, Result};
 
+/// Remove `<think>...</think>` blocks (and variants like `<Thinking>`) from LLM output.
+fn strip_think_tags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(start) = remaining.to_lowercase().find("<think") {
+        result.push_str(&remaining[..start]);
+        // Find the closing tag
+        if let Some(end) = remaining[start..].to_lowercase().find("</think") {
+            let close_end = remaining[start + end..]
+                .find('>')
+                .map(|i| start + end + i + 1)
+                .unwrap_or(remaining.len());
+            remaining = &remaining[close_end..];
+        } else {
+            // No closing tag — strip everything from <think onward
+            remaining = "";
+        }
+    }
+    result.push_str(remaining);
+    result.trim().to_string()
+}
+
 use crate::{
     app::{RuntimeStatus, SharedState},
     audio::RecordedAudio,
@@ -68,6 +90,9 @@ pub async fn process_recording(
         eprintln!("[glide] LLM: disabled, using raw transcript");
         raw_text.clone()
     };
+
+    // Strip <think>...</think> tags some models emit (e.g. DeepSeek reasoning)
+    let cleaned_text = strip_think_tags(&cleaned_text);
 
     eprintln!("[glide] Pasting {} chars", cleaned_text.len());
     paste::paste_text(&cleaned_text, &config.paste).context("failed to paste transcript")?;

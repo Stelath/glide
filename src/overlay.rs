@@ -65,10 +65,32 @@ impl OverlayView {
                             }
                             OverlayPhase::Recording => {
                                 view.mode = OverlayMode::Eq;
-                                view.eq_bars = compute_eq_bars(
+                                // Compute half the bars from FFT, then mirror
+                                let half = (view.eq_bars.len() + 1) / 2;
+                                let new_half = compute_eq_bars(
                                     &view.shared,
-                                    view.eq_bars.len(),
+                                    half,
                                 );
+                                // Mirror: [high_freq..low_freq, low_freq..high_freq]
+                                let total = view.eq_bars.len();
+                                let mut new_bars = Vec::with_capacity(total);
+                                // Left half: reversed (high freq on outside, low freq center)
+                                for i in (0..total / 2).rev() {
+                                    new_bars.push(new_half.get(i).copied().unwrap_or(0.0));
+                                }
+                                // Right half: normal order (low freq center, high freq outside)
+                                for i in 0..((total + 1) / 2) {
+                                    new_bars.push(new_half.get(i).copied().unwrap_or(0.0));
+                                }
+                                new_bars.truncate(total);
+
+                                // Exponential smoothing: bars rise fast, fall slowly
+                                let attack = 0.6;
+                                let decay = 0.12;
+                                for (old, &new) in view.eq_bars.iter_mut().zip(&new_bars) {
+                                    let factor = if new > *old { attack } else { decay };
+                                    *old += (new - *old) * factor;
+                                }
                             }
                         }
                         cx.notify();
@@ -106,7 +128,7 @@ fn render_eq(
     bars: &[f32],
     w: f32,
     h: f32,
-    bg_opacity: f32,
+    _bg_opacity: f32,
     style: OverlayStyle,
 ) -> gpui::Div {
     let bar_width: f32 = match style {
@@ -124,23 +146,20 @@ fn render_eq(
     div()
         .w(px(w))
         .h(px(h))
-        .rounded(px(16.0))
-        .bg(hsla(0.0, 0.0, 0.08, bg_opacity))
+        .rounded(px(4.0))
+        .bg(hsla(0.0, 0.0, 0.06, 0.97))
         .flex()
         .items_end()
         .justify_center()
         .gap(px(gap))
-        .pb(px(12.0))
+        .pb(px(10.0))
         .children(bars.iter().enumerate().map(|(i, &magnitude)| {
-            let bar_h = (magnitude * max_bar_height).max(4.0);
-            // Blue-ish gradient based on bar index
-            let hue = 0.58 + (i as f32 * 0.01); // slight hue shift across bars
+            let bar_h = (magnitude * max_bar_height).max(2.0);
             div()
                 .id(SharedString::from(format!("bar-{i}")))
                 .w(px(bar_width))
                 .h(px(bar_h))
-                .rounded(px(3.0))
-                .bg(hsla(hue, 0.75, 0.55, 0.9))
+                .bg(hsla(0.0, 0.0, 0.78, 0.9))
         }))
 }
 
@@ -148,26 +167,25 @@ fn render_eq(
 // Loading Dots Rendering
 // ---------------------------------------------------------------------------
 
-fn render_loading(tick: usize, w: f32, h: f32, bg_opacity: f32) -> gpui::Div {
+fn render_loading(tick: usize, w: f32, h: f32, _bg_opacity: f32) -> gpui::Div {
     div()
         .w(px(w))
         .h(px(h))
-        .rounded(px(16.0))
-        .bg(hsla(0.0, 0.0, 0.08, bg_opacity))
+        .rounded(px(4.0))
+        .bg(hsla(0.0, 0.0, 0.06, 0.97))
         .flex()
         .items_center()
         .justify_center()
-        .gap(px(10.0))
+        .gap(px(8.0))
         .children((0..3).map(|i| {
-            // Staggered sinusoidal fade: each dot offset by ~120 degrees
             let phase = ((tick as f32 + i as f32 * 10.0) % 30.0) / 30.0;
-            let dot_opacity = (phase * std::f32::consts::PI).sin().max(0.15);
+            let dot_opacity = (phase * std::f32::consts::PI).sin().max(0.12);
             div()
                 .id(SharedString::from(format!("dot-{i}")))
-                .w(px(10.0))
-                .h(px(10.0))
-                .rounded(px(5.0))
-                .bg(hsla(0.0, 0.0, 1.0, dot_opacity))
+                .w(px(6.0))
+                .h(px(6.0))
+                .rounded(px(3.0))
+                .bg(hsla(0.0, 0.0, 0.78, dot_opacity))
         }))
 }
 
@@ -208,10 +226,13 @@ fn compute_eq_bars(shared: &SharedState, bar_count: usize) -> Vec<f32> {
     use spectrum_analyzer::scaling::divide_by_N_sqrt;
     use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
 
+    let lo_hz: f32 = 80.0;
+    let hi_hz: f32 = 8000.0;
+
     let spectrum = samples_fft_to_spectrum(
         &samples,
         sample_rate,
-        FrequencyLimit::Range(80.0, 8000.0),
+        FrequencyLimit::Range(lo_hz, hi_hz),
         Some(&divide_by_N_sqrt),
     );
 
@@ -221,19 +242,28 @@ fn compute_eq_bars(shared: &SharedState, bar_count: usize) -> Vec<f32> {
             if data.is_empty() {
                 return vec![0.0; bar_count];
             }
-            let per_bar = data.len() / bar_count.max(1);
-            if per_bar == 0 {
-                return vec![0.0; bar_count];
-            }
+
+            let log_lo = lo_hz.ln();
+            let log_hi = hi_hz.ln();
+
+            // For each bar, find the FFT bins whose frequency falls within
+            // the bar's logarithmic frequency band.
             (0..bar_count)
                 .map(|i| {
-                    let start = i * per_bar;
-                    let end = (start + per_bar).min(data.len());
-                    let max_mag = data[start..end]
+                    let t0 = i as f32 / bar_count as f32;
+                    let t1 = (i + 1) as f32 / bar_count as f32;
+                    let freq_lo = (log_lo + t0 * (log_hi - log_lo)).exp();
+                    let freq_hi = (log_lo + t1 * (log_hi - log_lo)).exp();
+
+                    let max_mag = data
                         .iter()
-                        .map(|(_, magnitude)| magnitude.val())
+                        .filter(|(freq, _)| {
+                            let f = freq.val();
+                            f >= freq_lo && f < freq_hi
+                        })
+                        .map(|(_, mag)| mag.val())
                         .fold(0.0f32, f32::max);
-                    // Scale up since divide_by_N_sqrt values are small; clamp to 0..1
+
                     (max_mag * 20.0).min(1.0)
                 })
                 .collect()
@@ -283,7 +313,7 @@ impl OverlayController {
                         true
                     })
                     .unwrap_or_else(|_| {
-                        eprintln!("[glide] overlay: entity update failed, stopping poll");
+                        eprintln!("[glide] overlay controller: entity released, stopping poll");
                         false
                     });
                 if !should_continue {
@@ -303,8 +333,6 @@ impl OverlayController {
         let (screen_w, screen_h) = crate::config::main_display_size();
         let ov = &config.overlay;
         let (x, y) = compute_overlay_position(ov, screen_w, screen_h);
-        eprintln!("[glide] overlay: opening window at ({x},{y}) size {}x{}", ov.width, ov.height);
-
         let shared = self.shared.clone();
         let overlay_config = ov.clone();
 
@@ -331,16 +359,12 @@ impl OverlayController {
         );
 
         match handle {
-            Ok(h) => {
-                eprintln!("[glide] overlay: window opened successfully");
-                self.window_handle = Some(h);
-            }
-            Err(e) => eprintln!("[glide] overlay: failed to open overlay window: {e}"),
+            Ok(h) => self.window_handle = Some(h),
+            Err(e) => eprintln!("[glide] failed to open overlay window: {e}"),
         }
     }
 
     fn close_overlay_window(&mut self, cx: &mut Context<Self>) {
-        eprintln!("[glide] overlay: closing window");
         if let Some(handle) = self.window_handle.take() {
             let _ = handle.update(cx, |_view, window, _cx| {
                 window.remove_window();

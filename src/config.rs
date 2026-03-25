@@ -122,13 +122,21 @@ pub enum MenuBarIcon {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HotkeyConfig {
-    pub trigger: HotkeyTrigger,
+    #[serde(default = "default_hold_trigger")]
+    pub trigger: Option<HotkeyTrigger>,
+    #[serde(default)]
+    pub toggle_trigger: Option<HotkeyTrigger>,
+}
+
+fn default_hold_trigger() -> Option<HotkeyTrigger> {
+    Some(HotkeyTrigger::F8)
 }
 
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
-            trigger: HotkeyTrigger::F8,
+            trigger: default_hold_trigger(),
+            toggle_trigger: None,
         }
     }
 }
@@ -595,7 +603,8 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
                             || id_lower.contains("similarity")
                             || id_lower.starts_with("text-")
                             || id_lower.starts_with("code-")
-                            || id_lower.contains("omni-");
+                            || id_lower.contains("omni-")
+                            || id_lower.contains("orpheus");
                         if !excluded {
                             llm.push(info);
                         }

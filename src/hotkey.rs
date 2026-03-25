@@ -109,6 +109,8 @@ struct TapContext {
     runtime: Arc<Runtime>,
     recorder: AudioRecorder,
     pressed: bool,
+    /// Whether the toggle key has started a recording (press once to start, again to stop).
+    toggled: bool,
 }
 
 pub fn start_listener(shared: SharedState, runtime: Arc<Runtime>) {
@@ -120,6 +122,7 @@ pub fn start_listener(shared: SharedState, runtime: Arc<Runtime>) {
             runtime,
             recorder: AudioRecorder::new(),
             pressed: false,
+            toggled: false,
         });
         let ctx_ptr = Box::into_raw(ctx) as *mut std::ffi::c_void;
 
@@ -188,28 +191,56 @@ unsafe extern "C" fn event_tap_callback(
         return event;
     }
 
-    let trigger = ctx.shared.config().hotkey.trigger;
+    let config = ctx.shared.config();
+    let hold_trigger = config.hotkey.trigger;
+    let toggle_trigger = config.hotkey.toggle_trigger;
+
+    // Check if this keycode matches the hold-to-record trigger
+    let is_hold = hold_trigger.is_some_and(|t| is_trigger_keycode(t, keycode));
+    // Check if this keycode matches the toggle trigger
+    let is_toggle = toggle_trigger.is_some_and(|t| is_trigger_keycode(t, keycode));
 
     match event_type {
         ffi::kCGEventKeyDown => {
-            if is_trigger_keycode(trigger, keycode) && !ctx.pressed {
+            if is_hold && !ctx.pressed {
                 handle_press(ctx);
-            }
-        }
-        ffi::kCGEventKeyUp => {
-            if is_trigger_keycode(trigger, keycode) && ctx.pressed {
+            } else if is_toggle && !ctx.toggled {
+                // First press: start recording
+                ctx.toggled = true;
+                handle_press(ctx);
+            } else if is_toggle && ctx.toggled {
+                // Second press: stop and process
+                ctx.toggled = false;
                 handle_release(ctx);
             }
         }
+        ffi::kCGEventKeyUp => {
+            if is_hold && ctx.pressed && !ctx.toggled {
+                handle_release(ctx);
+            }
+            // Toggle trigger key-up is ignored (action happens on key-down)
+        }
         ffi::kCGEventFlagsChanged => {
-            if is_trigger_keycode(trigger, keycode) {
+            if is_hold {
                 let event_flags = unsafe { ffi::CGEventGetFlags(event) };
                 let is_down = modifier_is_pressed(keycode, event_flags);
                 if is_down && !ctx.pressed {
                     handle_press(ctx);
-                } else if !is_down && ctx.pressed {
+                } else if !is_down && ctx.pressed && !ctx.toggled {
                     handle_release(ctx);
                 }
+            }
+            if is_toggle {
+                let event_flags = unsafe { ffi::CGEventGetFlags(event) };
+                let is_down = modifier_is_pressed(keycode, event_flags);
+                if is_down && !ctx.toggled {
+                    ctx.toggled = true;
+                    handle_press(ctx);
+                } else if is_down && ctx.toggled {
+                    ctx.toggled = false;
+                    handle_release(ctx);
+                }
+                // Modifier release is ignored for toggle
             }
         }
         _ => {}

@@ -1,8 +1,12 @@
 [package]
 name = "glide"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 edition = "2024"
 description = "A macOS dictation app with spectrum analyzer overlay"
+
+[[bin]]
+name = "Glide"
+path = "src/main.rs"
 
 [dependencies]
 # UI
