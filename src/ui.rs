@@ -15,7 +15,7 @@ use gpui_component::ActiveTheme;
 use gpui_component::Side;
 
 use crate::app::{AppSnapshot, SharedState};
-use crate::config::{GlideConfig, HotkeyTrigger, ModelSelection, OverlayStyle, Provider, Style, ThemePreference};
+use crate::config::{GlideConfig, HotkeyTrigger, ModelSelection, OverlayPosition, OverlayStyle, Provider, Style, ThemePreference};
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(800);
 
@@ -355,9 +355,7 @@ impl SettingsApp {
 
         for (idx, (provider, inputs)) in providers.iter().enumerate() {
             let is_expanded = self.expanded_provider == Some(idx);
-            let logo_path = std::env::current_dir()
-                .ok()
-                .map(|d| d.join(provider.logo()));
+            let logo_path = Some(crate::config::asset_path(provider.logo()));
 
             // Accordion header
             let chevron = if is_expanded { "▼" } else { "▶" };
@@ -869,6 +867,7 @@ impl SettingsApp {
             );
         }
 
+        let current_position = snapshot.config.overlay.position;
         container = container.child(
             section_block("Recording Window", cx)
                 .child(
@@ -876,7 +875,58 @@ impl SettingsApp {
                         .child(
                             setting_row("Style", "Overlay shown while recording", cx)
                         )
-                        .child(style_cards),
+                        .child(style_cards)
+                        .child(
+                            setting_row("Position", "Where the overlay appears on screen", cx),
+                        )
+                        .child({
+                            let mut pos_cards = div().flex().gap_3().flex_1();
+                            let has_notch = crate::config::notch_width().is_some();
+                            let positions: Vec<_> = crate::config::OverlayPosition::ALL
+                                .iter()
+                                .filter(|p| **p != crate::config::OverlayPosition::Notch || has_notch)
+                                .copied()
+                                .collect();
+                            for pos in positions {
+                                let is_active = pos == current_position;
+                                pos_cards = pos_cards.child(
+                                    div()
+                                        .id(SharedString::from(format!("pos-{}", pos.label())))
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap_3()
+                                        .py_4()
+                                        .px_6()
+                                        .flex_1()
+                                        .rounded_lg()
+                                        .border_2()
+                                        .cursor_pointer()
+                                        .map(|d| {
+                                            if is_active {
+                                                d.border_color(cx.theme().primary)
+                                            } else {
+                                                d.border_color(cx.theme().border)
+                                            }
+                                        })
+                                        .bg(cx.theme().secondary)
+                                        .child(position_button_preview(pos))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(pos.label()),
+                                        )
+                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                            let _ = this.shared.update_config(|config| {
+                                                config.overlay.position = pos;
+                                            });
+                                            cx.notify();
+                                        })),
+                                );
+                            }
+                            pos_cards
+                        }),
                 ),
         );
 
@@ -1370,6 +1420,94 @@ fn setting_row(label: &str, description: &str, cx: &App) -> gpui::Div {
         )
 }
 
+fn position_button_preview(pos: OverlayPosition) -> gpui::Div {
+    let shell = gpui::hsla(0.0, 0.0, 0.07, 0.98);
+    let shell_edge = gpui::hsla(0.0, 0.0, 0.16, 1.0);
+    let bar = gpui::hsla(0.0, 0.0, 0.92, 0.96);
+
+    match pos {
+        OverlayPosition::Notch => {
+            let mut bars = div()
+                .flex()
+                .items_start()
+                .justify_center()
+                .gap(gpui::px(2.0))
+                .pt(gpui::px(4.0));
+            for h in [6.0, 10.0, 14.0, 9.0, 5.0] {
+                bars = bars.child(
+                    div()
+                        .w(gpui::px(3.0))
+                        .h(gpui::px(h))
+                        .bg(bar),
+                );
+            }
+
+            div()
+                .w(gpui::px(120.0))
+                .h(gpui::px(44.0))
+                .flex()
+                .items_start()
+                .justify_center()
+                .pt(gpui::px(2.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .justify_center()
+                        .gap(gpui::px(0.0))
+                        .child(div().w(gpui::px(32.0)).h(gpui::px(4.0)).bg(shell))
+                        .child(
+                            div()
+                                .w(gpui::px(36.0))
+                                .h(gpui::px(22.0))
+                                .flex()
+                                .justify_center()
+                                .bg(shell)
+                                .child(bars),
+                        )
+                        .child(div().w(gpui::px(32.0)).h(gpui::px(4.0)).bg(shell)),
+                )
+        }
+        OverlayPosition::Floating => {
+            let mut bars = div()
+                .flex()
+                .items_end()
+                .justify_center()
+                .gap(gpui::px(2.0))
+                .pb(gpui::px(4.0));
+            for h in [5.0, 10.0, 14.0, 9.0, 6.0] {
+                bars = bars.child(
+                    div()
+                        .w(gpui::px(3.0))
+                        .h(gpui::px(h))
+                        .bg(bar),
+                );
+            }
+
+            div()
+                .w(gpui::px(120.0))
+                .h(gpui::px(44.0))
+                .flex()
+                .items_start()
+                .justify_center()
+                .pt(gpui::px(8.0))
+                .child(
+                    div()
+                        .w(gpui::px(48.0))
+                        .h(gpui::px(24.0))
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .rounded(gpui::px(7.0))
+                        .border_1()
+                        .border_color(shell_edge)
+                        .bg(shell)
+                        .child(bars),
+                )
+        }
+    }
+}
+
 fn hint_row(text: &str, cx: &App) -> gpui::Div {
     div()
         .text_xs()
@@ -1380,10 +1518,9 @@ fn hint_row(text: &str, cx: &App) -> gpui::Div {
 /// Render a single model row inside a model picker popover.
 fn model_picker_item(
     model: &crate::config::ModelInfo,
-    cwd: &std::path::Path,
     cx: &App,
 ) -> gpui::Stateful<gpui::Div> {
-    let logo_path = cwd.join(&model.logo);
+    let logo_path = crate::config::asset_path(&model.logo);
     div()
         .id(SharedString::from(format!("pick-{}", model.id)))
         .flex()
@@ -1430,7 +1567,6 @@ fn model_dropdown_button(
         .trigger(trigger)
         .content(move |_state, _window, cx| {
             let popover = cx.entity().clone();
-            let cwd = std::env::current_dir().unwrap_or_default();
             let query = search_entity.read(cx).value().to_string();
             let filtered: Vec<_> = if query.is_empty() {
                 models.iter().collect()
@@ -1452,7 +1588,7 @@ fn model_dropdown_button(
                 let shared = shared.clone();
                 let popover = popover.clone();
                 list = list.child(
-                    model_picker_item(model, &cwd, cx).on_click(
+                    model_picker_item(model, cx).on_click(
                         move |_, window, cx| {
                             let id = model_id.clone();
                             let provider = crate::config::Provider::from_model_info_provider(&model_provider_str)
@@ -1492,14 +1628,12 @@ fn model_dropdown_button(
 
     let mut wrapper = div().flex().items_center().gap_1().flex_shrink_0();
     if let Some(ref logo) = current_logo {
-        if let Ok(cwd) = std::env::current_dir() {
-            wrapper = wrapper.child(
-                img(cwd.join(logo))
-                    .w(gpui::px(16.0))
-                    .h(gpui::px(16.0))
-                    .rounded_sm(),
-            );
-        }
+        wrapper = wrapper.child(
+            img(crate::config::asset_path(logo))
+                .w(gpui::px(16.0))
+                .h(gpui::px(16.0))
+                .rounded_sm(),
+        );
     }
     wrapper.child(popover)
 }
@@ -1540,7 +1674,6 @@ fn style_model_dropdown(
         .trigger(trigger)
         .content(move |_state, _window, cx| {
             let popover = cx.entity().clone();
-            let cwd = std::env::current_dir().unwrap_or_default();
             let query = search_entity.read(cx).value().to_string();
             let filtered: Vec<_> = if query.is_empty() {
                 models.iter().collect()
@@ -1593,7 +1726,7 @@ fn style_model_dropdown(
                 let shared = shared.clone();
                 let popover = popover.clone();
                 list = list.child(
-                    model_picker_item(model, &cwd, cx).on_click(
+                    model_picker_item(model, cx).on_click(
                         move |_, window, cx| {
                             let id = model_id.clone();
                             let model_provider = model_provider_str_style.clone();
@@ -1642,14 +1775,12 @@ fn style_model_dropdown(
 
     let mut wrapper = div().flex().items_center().gap_1().flex_shrink_0();
     if let Some(ref logo) = current_logo {
-        if let Ok(cwd) = std::env::current_dir() {
-            wrapper = wrapper.child(
-                img(cwd.join(logo))
-                    .w(gpui::px(16.0))
-                    .h(gpui::px(16.0))
-                    .rounded_sm(),
-            );
-        }
+        wrapper = wrapper.child(
+            img(crate::config::asset_path(logo))
+                .w(gpui::px(16.0))
+                .h(gpui::px(16.0))
+                .rounded_sm(),
+        );
     }
     wrapper.child(popover)
 }

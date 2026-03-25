@@ -3,6 +3,28 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::{fmt, fs, path::PathBuf};
 
+/// Resolve a relative asset path (e.g. "assets/icons/logo.svg") to an absolute
+/// path that works both during development (`cargo run`) and inside a macOS
+/// `.app` bundle where assets live under `Contents/Resources/`.
+pub fn asset_path(relative: &str) -> PathBuf {
+    // 1. Check inside the .app bundle's Resources directory
+    let exe = std::env::current_exe().unwrap_or_default();
+    let bundle_resources = exe
+        .parent()             // Contents/MacOS
+        .and_then(|p| p.parent()) // Contents
+        .map(|p| p.join("Resources").join(relative));
+    if let Some(ref p) = bundle_resources {
+        if p.exists() {
+            return p.clone();
+        }
+    }
+
+    // 2. Fall back to cwd (development)
+    std::env::current_dir()
+        .unwrap_or_default()
+        .join(relative)
+}
+
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
@@ -890,6 +912,57 @@ pub fn main_display_size() -> (usize, usize) {
     }
 }
 
+/// Get the width of the MacBook notch in logical points, or None if no notch.
+pub fn notch_width() -> Option<u32> {
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct NSRect {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    }
+
+    // On ARM64, NSRect is returned in registers (not via stret).
+    type MsgSendRect = unsafe extern "C" fn(*mut c_void, *mut c_void) -> NSRect;
+
+    unsafe {
+        let ns_screen = objc_getClass(b"NSScreen\0".as_ptr());
+        if ns_screen.is_null() {
+            return None;
+        }
+        let main_sel = sel_registerName(b"mainScreen\0".as_ptr());
+        let screen = objc_msgSend(ns_screen, main_sel);
+        if screen.is_null() {
+            return None;
+        }
+
+        // Check if the screen has a notch via auxiliaryTopLeftArea (macOS 12+)
+        let left_sel = sel_registerName(b"auxiliaryTopLeftArea\0".as_ptr());
+        let right_sel = sel_registerName(b"auxiliaryTopRightArea\0".as_ptr());
+        let frame_sel = sel_registerName(b"frame\0".as_ptr());
+
+        let msg_rect: MsgSendRect = std::mem::transmute(objc_msgSend as *const ());
+
+        let frame = msg_rect(screen, frame_sel);
+        let left_area = msg_rect(screen, left_sel);
+        let right_area = msg_rect(screen, right_sel);
+
+        // If both auxiliary areas are zero-width, there's no notch
+        if left_area.w == 0.0 && right_area.w == 0.0 {
+            return None;
+        }
+
+        // Notch width = screen width - left safe area width - right safe area width
+        let nw = frame.w - left_area.w - right_area.w;
+        if nw > 0.0 {
+            Some(nw as u32)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OverlayStyle {
@@ -910,13 +983,31 @@ impl OverlayStyle {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayPosition {
+    Notch,
+    Floating,
+}
+
+impl OverlayPosition {
+    pub const ALL: [Self; 2] = [Self::Notch, Self::Floating];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Notch => "Notch",
+            Self::Floating => "Floating",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OverlayConfig {
     pub style: OverlayStyle,
     pub width: u32,
     pub height: u32,
-    pub position: String,
+    pub position: OverlayPosition,
     pub opacity: f32,
 }
 
@@ -926,7 +1017,7 @@ impl Default for OverlayConfig {
             style: OverlayStyle::Classic,
             width: 300,
             height: 80,
-            position: "bottom-center".to_string(),
+            position: OverlayPosition::Floating,
             opacity: 0.85,
         }
     }

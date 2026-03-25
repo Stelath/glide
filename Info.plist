@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Glide</string>
+	<key>CFBundleDisplayName</key>
+	<string>Glide</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.glide.app</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.0-beta.1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0-beta.1</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>Glide</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Glide needs microphone access for speech-to-text dictation.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Glide needs accessibility access to paste transcribed text into other applications.</string>
+</dict>
+</plist>

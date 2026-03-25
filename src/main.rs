@@ -71,7 +71,6 @@ struct AboutView;
 
 impl Render for AboutView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let cwd = std::env::current_dir().unwrap_or_default();
         div()
             .flex()
             .flex_col()
@@ -81,7 +80,7 @@ impl Render for AboutView {
             .bg(cx.theme().background)
             .gap(px(12.0))
             .child(
-                img(cwd.join("assets/icons/logo.svg"))
+                img(crate::config::asset_path("assets/icons/logo.svg"))
                     .w(px(80.0))
                     .h(px(80.0)),
             )
