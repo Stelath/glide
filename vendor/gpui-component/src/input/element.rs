@@ -989,6 +989,14 @@ impl Element for TextElement {
             None
         };
 
+        // Eagerly sync wrap_width so layout_lines uses current wrapping on resize.
+        let ime_marked_range = state.ime_marked_range.clone();
+        self.state.update(cx, |state, cx| {
+            state.text_wrapper.set_wrap_width(wrap_width, cx);
+            state.mode.update_auto_grow(&state.text_wrapper);
+        });
+        let state = self.state.read(cx);
+
         let mut last_layout = LastLayout {
             visible_range,
             visible_top,
@@ -1027,7 +1035,7 @@ impl Element for TextElement {
 
                 runs.extend(highlight_styles.iter().map(|(range, style)| {
                     let mut run = text_style.clone().highlight(*style).to_run(range.len());
-                    if let Some(ime_marked_range) = &state.ime_marked_range {
+                    if let Some(ime_marked_range) = &ime_marked_range {
                         if range.start >= ime_marked_range.start
                             && range.end <= ime_marked_range.end
                         {
@@ -1044,7 +1052,7 @@ impl Element for TextElement {
             } else {
                 vec![run]
             }
-        } else if let Some(ime_marked_range) = &state.ime_marked_range {
+        } else if let Some(ime_marked_range) = &ime_marked_range {
             // IME marked text
             vec![
                 TextRun {
