@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, img, App, Entity, FocusHandle, SharedString, Subscription, Window};
+use gpui::{div, img, App, Entity, SharedString, Subscription, Window};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -51,6 +51,8 @@ struct StyleInputs {
     apps: Vec<String>,
     prompt: Entity<InputState>,
     search: Entity<InputState>,
+    stt_model_search: Entity<InputState>,
+    llm_model_search: Entity<InputState>,
 }
 
 pub struct SettingsApp {
@@ -58,7 +60,6 @@ pub struct SettingsApp {
     active_pane: SettingsPane,
     sidebar_collapsed: bool,
     recording_hotkey: bool,
-    hotkey_focus: FocusHandle,
 
     openai_inputs: ProviderInputs,
     groq_inputs: ProviderInputs,
@@ -66,7 +67,12 @@ pub struct SettingsApp {
     expanded_style: Option<usize>,
 
     default_prompt: Entity<InputState>,
+    default_stt_search: Entity<InputState>,
+    default_llm_search: Entity<InputState>,
     styles: Vec<StyleInputs>,
+
+    last_fetched_openai_key: String,
+    last_fetched_groq_key: String,
 
     save_pending: bool,
     _subscriptions: Vec<Subscription>,
@@ -102,6 +108,8 @@ impl SettingsApp {
                 .auto_grow(3, 12)
                 .default_value(&config.llm.prompt.system)
         });
+        let default_stt_search = cx.new(|cx| InputState::new(window, cx));
+        let default_llm_search = cx.new(|cx| InputState::new(window, cx));
 
         let mut subs = vec![
             cx.subscribe_in(&openai_api_key, window, Self::on_input_change),
@@ -136,7 +144,6 @@ impl SettingsApp {
             active_pane: SettingsPane::General,
             sidebar_collapsed: false,
             recording_hotkey: false,
-            hotkey_focus: cx.focus_handle(),
             openai_inputs: ProviderInputs {
                 api_key: openai_api_key,
                 base_url: openai_base_url,
@@ -148,7 +155,11 @@ impl SettingsApp {
             expanded_provider: Some(0),
             expanded_style: Some(0),
             default_prompt,
+            default_stt_search,
+            default_llm_search,
             styles,
+            last_fetched_openai_key: config.providers.openai.api_key.clone(),
+            last_fetched_groq_key: config.providers.groq.api_key.clone(),
             save_pending: false,
             _subscriptions: subs,
         }
@@ -168,6 +179,8 @@ impl SettingsApp {
                 .default_value(&entry.prompt)
         });
         let search = cx.new(|cx| InputState::new(window, cx));
+        let stt_model_search = cx.new(|cx| InputState::new(window, cx));
+        let llm_model_search = cx.new(|cx| InputState::new(window, cx));
         let subs = vec![
             cx.subscribe_in(&name, window, Self::on_input_change),
             cx.subscribe_in(&prompt, window, Self::on_input_change),
@@ -178,6 +191,8 @@ impl SettingsApp {
                 apps: entry.apps.clone(),
                 prompt,
                 search,
+                stt_model_search,
+                llm_model_search,
             },
             subs,
         )
@@ -212,7 +227,17 @@ impl SettingsApp {
 
     fn save(&mut self, cx: &gpui::Context<Self>) {
         let draft = self.draft_from_inputs(cx);
+        let new_openai_key = draft.providers.openai.api_key.clone();
+        let new_groq_key = draft.providers.groq.api_key.clone();
+        let providers_changed = new_openai_key != self.last_fetched_openai_key
+            || new_groq_key != self.last_fetched_groq_key;
+        let providers = draft.providers.clone();
         let _ = self.shared.update_config(move |config| *config = draft);
+        if providers_changed {
+            self.last_fetched_openai_key = new_openai_key;
+            self.last_fetched_groq_key = new_groq_key;
+            crate::config::fetch_all_models(&providers);
+        }
     }
 
     fn draft_from_inputs(&self, cx: &gpui::Context<Self>) -> GlideConfig {
@@ -379,6 +404,7 @@ impl SettingsApp {
                 }));
 
             // Accordion body
+            let is_verified = crate::config::provider_verified(*provider);
             let body = if is_expanded {
                 Some(
                     div()
@@ -392,9 +418,24 @@ impl SettingsApp {
                         .border_color(cx.theme().border)
                         .child(field_label("API Key", cx))
                         .child(
-                            Input::new(&inputs.api_key)
-                                .mask_toggle()
-                                .cleanable(true),
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div().flex_1().child(
+                                        Input::new(&inputs.api_key)
+                                            .mask_toggle()
+                                            .cleanable(true),
+                                    ),
+                                )
+                                .when(is_verified, |this| {
+                                    this.child(
+                                        Icon::new(IconName::Check)
+                                            .xsmall()
+                                            .text_color(gpui::rgb(0x22C55E)),
+                                    )
+                                }),
                         )
                         .child(field_label("Base URL", cx))
                         .child(Input::new(&inputs.base_url)),
@@ -451,6 +492,7 @@ impl SettingsApp {
                                         &default_stt,
                                         &stt_models,
                                         shared_stt,
+                                        self.default_stt_search.clone(),
                                         |config, model| {
                                             config.llm.prompt.default_stt_model = model;
                                         },
@@ -465,6 +507,7 @@ impl SettingsApp {
                                         &default_llm,
                                         &llm_models,
                                         shared_llm,
+                                        self.default_llm_search.clone(),
                                         |config, model| {
                                             config.llm.prompt.default_llm_model = model;
                                         },
@@ -697,6 +740,7 @@ impl SettingsApp {
                                         &stt_display,
                                         &stt_models,
                                         self.shared.clone(),
+                                        style.stt_model_search.clone(),
                                         index,
                                         true,
                                     ),
@@ -707,6 +751,7 @@ impl SettingsApp {
                                         &llm_display,
                                         &llm_models,
                                         self.shared.clone(),
+                                        style.llm_model_search.clone(),
                                         index,
                                         false,
                                     ),
@@ -832,6 +877,20 @@ impl SettingsApp {
 
         // -- Keyboard Shortcut ------------------------------------------
         let hotkey_label = current_trigger.label();
+
+        // Poll the CGEventTap for a recorded keycode (set by the background event tap thread)
+        if self.recording_hotkey {
+            if let Some(code) = self.shared.poll_recorded_keycode() {
+                let trigger = HotkeyTrigger::from_keycode(code);
+                let _ = self.shared.update_config(|config| {
+                    config.hotkey.trigger = trigger;
+                });
+                self.recording_hotkey = false;
+                self.schedule_autosave(cx);
+                cx.notify();
+            }
+        }
+
         let is_recording = self.recording_hotkey;
 
         let shortcut_button = if is_recording {
@@ -859,61 +918,28 @@ impl SettingsApp {
                                 cx,
                             )
                             .child(
-                                div()
-                                    .id("hotkey-recorder")
-                                    .track_focus(&self.hotkey_focus)
-                                    .flex_shrink_0()
-                                    .on_key_down(cx.listener(
-                                        |this, event: &gpui::KeyDownEvent, window, cx| {
-                                            if !this.recording_hotkey {
-                                                return;
+                                shortcut_button
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.shared.start_hotkey_recording();
+                                        this.recording_hotkey = true;
+                                        cx.notify();
+                                        // Poll for the recorded keycode every 50ms
+                                        cx.spawn(async move |this, cx| {
+                                            loop {
+                                                cx.background_executor()
+                                                    .timer(Duration::from_millis(50))
+                                                    .await;
+                                                let still_recording = this
+                                                    .update(cx, |this, _| this.recording_hotkey)
+                                                    .unwrap_or(false);
+                                                if !still_recording {
+                                                    break;
+                                                }
+                                                let _ = this.update(cx, |_, cx| cx.notify());
                                             }
-                                            let key = event.keystroke.key.as_str();
-                                            let trigger = HotkeyTrigger::from_key_name(key);
-                                            let _ = this.shared.update_config(|config| {
-                                                config.hotkey.trigger = trigger;
-                                            });
-                                            this.recording_hotkey = false;
-                                            window.prevent_default();
-                                            cx.stop_propagation();
-                                            cx.notify();
-                                        },
-                                    ))
-                                    .on_modifiers_changed(cx.listener(
-                                        |this, event: &gpui::ModifiersChangedEvent, _window, cx| {
-                                            if !this.recording_hotkey {
-                                                return;
-                                            }
-                                            let mods = &event.modifiers;
-                                            let trigger = if mods.platform {
-                                                Some(HotkeyTrigger::Custom(55))
-                                            } else if mods.alt {
-                                                Some(HotkeyTrigger::Option)
-                                            } else if mods.control {
-                                                Some(HotkeyTrigger::Custom(59))
-                                            } else if mods.shift {
-                                                Some(HotkeyTrigger::Custom(56))
-                                            } else {
-                                                None
-                                            };
-                                            if let Some(trigger) = trigger {
-                                                let _ = this.shared.update_config(|config| {
-                                                    config.hotkey.trigger = trigger;
-                                                });
-                                                this.recording_hotkey = false;
-                                                cx.stop_propagation();
-                                                cx.notify();
-                                            }
-                                        },
-                                    ))
-                                    .child(
-                                        shortcut_button
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.recording_hotkey = true;
-                                                window.focus(&this.hotkey_focus);
-                                                cx.notify();
-                                            })),
-                                    ),
+                                        })
+                                        .detach();
+                                    })),
                             ),
                         ),
                 ),
@@ -1261,102 +1287,274 @@ fn hint_row(text: &str, cx: &App) -> gpui::Div {
         .child(text.to_string())
 }
 
-/// Dropdown button for selecting a default model (STT or LLM).
+/// Render a single model row inside a model picker popover.
+fn model_picker_item(
+    model: &crate::config::ModelInfo,
+    cwd: &std::path::Path,
+    cx: &App,
+) -> gpui::Stateful<gpui::Div> {
+    let logo_path = cwd.join(&model.logo);
+    div()
+        .id(SharedString::from(format!("pick-{}", model.id)))
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor_pointer()
+        .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
+        .child(img(logo_path).w(gpui::px(16.0)).h(gpui::px(16.0)).rounded_sm())
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child(model.id.clone()),
+        )
+}
+
+/// Popover-based model picker with fuzzy search and provider logos.
 fn model_dropdown_button(
     id: &str,
     current_model: &str,
     models: &[crate::config::ModelInfo],
     shared: SharedState,
+    search_entity: Entity<InputState>,
     updater: fn(&mut GlideConfig, String),
-) -> impl IntoElement {
+) -> gpui::Div {
+    let current_logo = models
+        .iter()
+        .find(|m| m.id == current_model)
+        .map(|m| m.logo.clone());
     let models = models.to_vec();
-    let label = SharedString::from(current_model.to_string());
-    Button::new(SharedString::from(id.to_string()))
-        .label(label)
+
+    let popover_id = SharedString::from(format!("model-picker-{id}"));
+
+    let trigger = Button::new(SharedString::from(format!("trigger-{id}")))
+        .label(SharedString::from(current_model.to_string()))
         .ghost()
         .small()
-        .compact()
-        .dropdown_menu(move |menu, _, _| {
-            let mut m = menu;
-            for model in &models {
+        .compact();
+
+    let popover = Popover::new(popover_id)
+        .trigger(trigger)
+        .content(move |_state, _window, cx| {
+            let popover = cx.entity().clone();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let query = search_entity.read(cx).value().to_string();
+            let filtered: Vec<_> = if query.is_empty() {
+                models.iter().collect()
+            } else {
+                let mut scored: Vec<_> = models
+                    .iter()
+                    .filter_map(|m| {
+                        crate::config::fuzzy_match(&query, &m.id).map(|s| (m, s))
+                    })
+                    .collect();
+                scored.sort_by(|a, b| b.1.cmp(&a.1));
+                scored.into_iter().map(|(m, _)| m).collect()
+            };
+
+            let mut list = div().flex().flex_col().gap_0p5().p_1();
+            for model in &filtered {
                 let model_id = model.id.clone();
                 let shared = shared.clone();
-                m = m.item(
-                    PopupMenuItem::new(SharedString::from(format!(
-                        "{} — {}",
-                        model.provider, model.id
-                    )))
-                    .on_click(move |_, _, _cx| {
-                        let id = model_id.clone();
-                        let _ = shared.update_config(|config| {
-                            updater(config, id);
-                        });
-                    }),
+                let popover = popover.clone();
+                list = list.child(
+                    model_picker_item(model, &cwd, cx).on_click(
+                        move |_, window, cx| {
+                            let id = model_id.clone();
+                            let _ = shared.update_config(|config| {
+                                updater(config, id);
+                            });
+                            popover.update(cx, |state, cx| {
+                                state.dismiss(window, cx);
+                            });
+                        },
+                    ),
                 );
             }
-            m
-        })
+
+            div()
+                .w(gpui::px(280.0))
+                .max_h(gpui::px(300.0))
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .p_2()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(Input::new(&search_entity)),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from("model-scroll"))
+                        .flex_1()
+                        .overflow_y_scroll()
+                        .child(list),
+                )
+        });
+
+    let mut wrapper = div().flex().items_center().gap_1().flex_shrink_0();
+    if let Some(ref logo) = current_logo {
+        if let Ok(cwd) = std::env::current_dir() {
+            wrapper = wrapper.child(
+                img(cwd.join(logo))
+                    .w(gpui::px(16.0))
+                    .h(gpui::px(16.0))
+                    .rounded_sm(),
+            );
+        }
+    }
+    wrapper.child(popover)
 }
 
-/// Dropdown button for per-style model override (with "Default" option).
+/// Popover-based model picker for per-style overrides, with "Default" option.
 fn style_model_dropdown(
     id: &str,
     current_display: &str,
     models: &[crate::config::ModelInfo],
     shared: SharedState,
+    search_entity: Entity<InputState>,
     style_index: usize,
     is_stt: bool,
-) -> impl IntoElement {
+) -> gpui::Div {
+    let raw_model = if current_display.starts_with("Default (") {
+        current_display
+            .strip_prefix("Default (")
+            .and_then(|s| s.strip_suffix(')'))
+            .unwrap_or(current_display)
+    } else {
+        current_display
+    };
+    let current_logo = models
+        .iter()
+        .find(|m| m.id == raw_model)
+        .map(|m| m.logo.clone());
     let models = models.to_vec();
-    let label = SharedString::from(current_display.to_string());
-    Button::new(SharedString::from(id.to_string()))
-        .label(label)
+
+    let popover_id = SharedString::from(format!("model-picker-{id}"));
+
+    let trigger = Button::new(SharedString::from(format!("trigger-{id}")))
+        .label(SharedString::from(current_display.to_string()))
         .ghost()
         .small()
-        .compact()
-        .dropdown_menu(move |menu, _, _| {
-            let mut m = menu;
-            // "Default" option — clears the override
+        .compact();
+
+    let popover = Popover::new(popover_id)
+        .trigger(trigger)
+        .content(move |_state, _window, cx| {
+            let popover = cx.entity().clone();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let query = search_entity.read(cx).value().to_string();
+            let filtered: Vec<_> = if query.is_empty() {
+                models.iter().collect()
+            } else {
+                let mut scored: Vec<_> = models
+                    .iter()
+                    .filter_map(|m| {
+                        crate::config::fuzzy_match(&query, &m.id).map(|s| (m, s))
+                    })
+                    .collect();
+                scored.sort_by(|a, b| b.1.cmp(&a.1));
+                scored.into_iter().map(|(m, _)| m).collect()
+            };
+
+            // "Default" option
             let shared_default = shared.clone();
-            m = m.item(
-                PopupMenuItem::new("Default (use global)")
-                    .on_click(move |_, _, _cx| {
-                        let _ = shared_default.update_config(|config| {
-                            if let Some(style) = config.llm.prompt.styles.get_mut(style_index) {
-                                if is_stt {
-                                    style.stt_model = None;
-                                } else {
-                                    style.llm_model = None;
-                                }
+            let popover_default = popover.clone();
+            let default_item = div()
+                .id("pick-default")
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Default (use global)")
+                .on_click(move |_, window, cx| {
+                    let _ = shared_default.update_config(|config| {
+                        if let Some(style) = config.llm.prompt.styles.get_mut(style_index) {
+                            if is_stt {
+                                style.stt_model = None;
+                            } else {
+                                style.llm_model = None;
                             }
-                        });
-                    }),
-            );
-            // Specific model options
-            for model in &models {
+                        }
+                    });
+                    popover_default.update(cx, |state, cx| {
+                        state.dismiss(window, cx);
+                    });
+                });
+
+            let mut list = div().flex().flex_col().gap_0p5().p_1().child(default_item);
+            for model in &filtered {
                 let model_id = model.id.clone();
                 let shared = shared.clone();
-                m = m.item(
-                    PopupMenuItem::new(SharedString::from(format!(
-                        "{} — {}",
-                        model.provider, model.id
-                    )))
-                    .on_click(move |_, _, _cx| {
-                        let id = model_id.clone();
-                        let _ = shared.update_config(|config| {
-                            if let Some(style) = config.llm.prompt.styles.get_mut(style_index) {
-                                if is_stt {
-                                    style.stt_model = Some(id);
-                                } else {
-                                    style.llm_model = Some(id);
+                let popover = popover.clone();
+                list = list.child(
+                    model_picker_item(model, &cwd, cx).on_click(
+                        move |_, window, cx| {
+                            let id = model_id.clone();
+                            let _ = shared.update_config(|config| {
+                                if let Some(style) =
+                                    config.llm.prompt.styles.get_mut(style_index)
+                                {
+                                    if is_stt {
+                                        style.stt_model = Some(id);
+                                    } else {
+                                        style.llm_model = Some(id);
+                                    }
                                 }
-                            }
-                        });
-                    }),
+                            });
+                            popover.update(cx, |state, cx| {
+                                state.dismiss(window, cx);
+                            });
+                        },
+                    ),
                 );
             }
-            m
-        })
+
+            div()
+                .w(gpui::px(280.0))
+                .max_h(gpui::px(300.0))
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .p_2()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(Input::new(&search_entity)),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from("style-model-scroll"))
+                        .flex_1()
+                        .overflow_y_scroll()
+                        .child(list),
+                )
+        });
+
+    let mut wrapper = div().flex().items_center().gap_1().flex_shrink_0();
+    if let Some(ref logo) = current_logo {
+        if let Ok(cwd) = std::env::current_dir() {
+            wrapper = wrapper.child(
+                img(cwd.join(logo))
+                    .w(gpui::px(16.0))
+                    .h(gpui::px(16.0))
+                    .rounded_sm(),
+            );
+        }
+    }
+    wrapper.child(popover)
 }
 
 #[cfg(test)]

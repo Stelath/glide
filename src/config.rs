@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::{fmt, fs, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,56 +35,28 @@ impl Default for GlideConfig {
 }
 
 impl GlideConfig {
+    /// Load config from confy + API keys from system keyring.
     pub fn load_or_create() -> Result<Self> {
-        let path = config_path()?;
-
-        // Migrate from old ~/.config/glide/ location if needed
-        if !path.exists() {
-            if let Some(old_path) = legacy_config_path() {
-                if old_path.exists() {
-                    if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent)
-                            .with_context(|| format!("failed to create {}", parent.display()))?;
-                        set_dir_permissions(parent);
-                    }
-                    fs::copy(&old_path, &path).with_context(|| {
-                        format!(
-                            "failed to migrate config from {} to {}",
-                            old_path.display(),
-                            path.display()
-                        )
-                    })?;
-                    set_file_permissions(&path);
-                }
-            }
-        }
-
-        if path.exists() {
-            let raw = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read config at {}", path.display()))?;
-            let config: Self = toml::from_str(&raw)
-                .with_context(|| format!("failed to parse config at {}", path.display()))?;
-            config.validate()?;
-            return Ok(config);
-        }
-
-        let config = Self::default();
-        config.save()?;
+        let mut config: Self =
+            confy::load("glide", "config").unwrap_or_default();
+        // Load API keys from the OS credential store (macOS Keychain)
+        config.providers.openai.api_key = load_key_from_keyring("openai");
+        config.providers.groq.api_key = load_key_from_keyring("groq");
+        config.validate()?;
         Ok(config)
     }
 
+    /// Save config via confy + API keys to system keyring.
     pub fn save(&self) -> Result<()> {
         self.validate()?;
-        let path = config_path()?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-            set_dir_permissions(parent);
+        #[cfg(not(test))]
+        {
+            confy::store("glide", "config", self)
+                .map_err(|e| anyhow::anyhow!("failed to save config: {e}"))?;
+            // Store API keys in the OS credential store
+            save_key_to_keyring("openai", &self.providers.openai.api_key);
+            save_key_to_keyring("groq", &self.providers.groq.api_key);
         }
-
-        let raw = toml::to_string_pretty(self).context("failed to serialize config")?;
-        fs::write(&path, raw).with_context(|| format!("failed to write {}", path.display()))?;
-        set_file_permissions(&path);
         Ok(())
     }
 
@@ -191,8 +163,6 @@ impl HotkeyTrigger {
     #[allow(dead_code)]
     pub fn from_keycode(code: u16) -> Self {
         match code {
-            58 | 61 => Self::Option,
-            54 => Self::CommandRight,
             100 => Self::F8,
             101 => Self::F9,
             109 => Self::F10,
@@ -200,22 +170,6 @@ impl HotkeyTrigger {
         }
     }
 
-    /// Map a GPUI keystroke key string to a trigger.
-    pub fn from_key_name(key: &str) -> Self {
-        match key {
-            "alt" => Self::Option,                // ⌥ Option (left)
-            "platform" => Self::Custom(55),       // ⌘ Command (left)
-            "control" => Self::Custom(59),        // ⌃ Control (left)
-            "shift" => Self::Custom(56),          // ⇧ Shift (left)
-            "f8" => Self::F8,
-            "f9" => Self::F9,
-            "f10" => Self::F10,
-            _ => {
-                let code = key_name_to_keycode(key);
-                Self::Custom(code)
-            }
-        }
-    }
 }
 
 /// Human-readable label for a macOS virtual keycode.
@@ -261,6 +215,7 @@ fn keycode_label(code: u16) -> String {
         60 => "⇧ Right Shift".to_string(),
         61 => "⌥ Right Option".to_string(),
         62 => "⌃ Right Ctrl".to_string(),
+        63 => "Fn".to_string(),
         96 => "F5".to_string(),
         97 => "F6".to_string(),
         98 => "F7".to_string(),
@@ -277,28 +232,11 @@ fn keycode_label(code: u16) -> String {
     }
 }
 
-/// Map a GPUI key name string to a macOS virtual keycode.
-fn key_name_to_keycode(name: &str) -> u16 {
-    match name {
-        "a" => 0, "s" => 1, "d" => 2, "f" => 3, "h" => 4, "g" => 5,
-        "z" => 6, "x" => 7, "c" => 8, "v" => 9, "b" => 11, "q" => 12,
-        "w" => 13, "e" => 14, "r" => 15, "y" => 16, "t" => 17,
-        "o" => 31, "u" => 32, "i" => 34, "p" => 35, "l" => 37,
-        "j" => 38, "k" => 40, "n" => 45, "m" => 46,
-        "enter" => 36, "space" => 49, "`" => 50, "backspace" => 51,
-        "escape" => 53, "tab" => 48,
-        "f1" => 122, "f2" => 120, "f3" => 99, "f4" => 118,
-        "f5" => 96, "f6" => 97, "f7" => 98, "f8" => 100,
-        "f9" => 101, "f10" => 109, "f11" => 103, "f12" => 111,
-        _ => 0,
-    }
-}
-
 /// Whether a macOS virtual keycode is a modifier key (fires flagsChanged, not keyDown/keyUp).
 #[allow(dead_code)]
 pub fn is_modifier_keycode(code: u16) -> bool {
-    // 54=RCmd, 55=LCmd, 56=LShift, 57=CapsLock, 58=LOption, 59=LCtrl, 60=RShift, 61=ROption, 62=RCtrl
-    matches!(code, 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 62)
+    // 54=RCmd, 55=LCmd, 56=LShift, 57=CapsLock, 58=LOption, 59=LCtrl, 60=RShift, 61=ROption, 62=RCtrl, 63=Fn
+    matches!(code, 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 62 | 63)
 }
 
 /// Return the CGEvent flag mask for a modifier keycode, used by the CGEventTap backend.
@@ -309,6 +247,7 @@ pub fn modifier_flag_for_keycode(code: u16) -> u64 {
         58 | 61 => 0x00080000, // NSEventModifierFlagOption
         59 | 62 => 0x00040000, // NSEventModifierFlagControl
         57 => 0x00010000,      // NSEventModifierFlagCapsLock
+        63 => 0x00800000,      // NSEventModifierFlagFunction
         _ => 0,
     }
 }
@@ -424,6 +363,7 @@ impl ProvidersConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProviderCredentials {
+    #[serde(skip)] // API keys stored in OS keyring, not in config file
     pub api_key: String,
     pub base_url: String,
 }
@@ -526,6 +466,17 @@ pub struct ModelInfo {
 
 static CACHED_STT_MODELS: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
 static CACHED_LLM_MODELS: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
+static PROVIDER_VERIFIED: OnceLock<Mutex<[bool; 2]>> = OnceLock::new();
+
+/// Check whether a provider's API key has been verified via a successful /models fetch.
+pub fn provider_verified(provider: Provider) -> bool {
+    let cache = PROVIDER_VERIFIED.get_or_init(|| Mutex::new([false; 2]));
+    let locked = cache.lock().unwrap();
+    match provider {
+        Provider::OpenAi => locked[0],
+        Provider::Groq => locked[1],
+    }
+}
 
 fn fallback_stt_models() -> Vec<ModelInfo> {
     vec![
@@ -576,6 +527,11 @@ struct ModelsResponse {
 #[derive(serde::Deserialize)]
 struct ModelsResponseEntry {
     id: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    owned_by: String,
+    #[serde(default)]
+    active: Option<bool>,
 }
 
 /// Fetch model lists from all configured providers in a background thread.
@@ -593,7 +549,10 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
             (Provider::OpenAi, &openai),
             (Provider::Groq, &groq),
         ] {
+            let verified_cache_skip = PROVIDER_VERIFIED.get_or_init(|| Mutex::new([false; 2]));
+            let skip_idx = match provider { Provider::OpenAi => 0, Provider::Groq => 1 };
             if creds.api_key.trim().is_empty() || creds.base_url.trim().is_empty() {
+                verified_cache_skip.lock().unwrap()[skip_idx] = false;
                 continue;
             }
             let url = format!("{}/models", creds.base_url.trim_end_matches('/'));
@@ -603,32 +562,57 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
                 .send()
                 .and_then(|r| r.json::<ModelsResponse>());
 
+            let verified_cache = PROVIDER_VERIFIED.get_or_init(|| Mutex::new([false; 2]));
+            let provider_idx = match provider { Provider::OpenAi => 0, Provider::Groq => 1 };
+
             if let Ok(resp) = resp {
+                verified_cache.lock().unwrap()[provider_idx] = true;
                 let logo = provider.logo().to_string();
                 let label = provider.label().to_string();
                 for entry in resp.data {
-                    let id = entry.id;
-                    let is_stt = id.contains("whisper");
+                    // Skip inactive models (Groq provides this field)
+                    if entry.active == Some(false) {
+                        continue;
+                    }
+
+                    let id = &entry.id;
+                    let id_lower = id.to_lowercase();
+
+                    let is_stt = id_lower.contains("whisper")
+                        || id_lower.contains("distil-whisper");
+
                     let info = ModelInfo {
                         id: id.clone(),
                         provider: label.clone(),
                         logo: logo.clone(),
                     };
+
                     if is_stt {
                         stt.push(info);
                     } else {
-                        // Filter out embedding, tts, dall-e, and moderation models
-                        let dominated = id.contains("embedding")
-                            || id.contains("tts")
-                            || id.contains("dall-e")
-                            || id.contains("moderation")
-                            || id.contains("davinci")
-                            || id.contains("babbage");
-                        if !dominated {
+                        // Exclude non-chat model types
+                        let excluded = id_lower.contains("embedding")
+                            || id_lower.contains("tts")
+                            || id_lower.contains("dall-e")
+                            || id_lower.contains("moderation")
+                            || id_lower.starts_with("ft:")
+                            || id_lower.contains("realtime")
+                            || id_lower.contains("-audio-")
+                            || id_lower.contains("davinci")
+                            || id_lower.contains("babbage")
+                            || id_lower.contains("canary")
+                            || id_lower.contains("search")
+                            || id_lower.contains("similarity")
+                            || id_lower.starts_with("text-")
+                            || id_lower.starts_with("code-")
+                            || id_lower.contains("omni-");
+                        if !excluded {
                             llm.push(info);
                         }
                     }
                 }
+            } else {
+                verified_cache.lock().unwrap()[provider_idx] = false;
             }
         }
 
@@ -678,19 +662,19 @@ impl Default for PromptConfig {
         Self {
             default_stt_model: "whisper-1".to_string(),
             default_llm_model: "gpt-4o-mini".to_string(),
-            system: "You are a dictation assistant. Clean up the following raw speech transcript into well-formatted text. Fix grammar, punctuation, and filler words. Preserve the speaker's intent exactly.".to_string(),
+            system: "You are a dictation post-processor. You receive raw speech-to-text output and return clean text ready to be typed into an application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context or custom vocabulary, correct the spelling. Never insert names or terms from context that the speaker did not say.\n- Preserve the speaker's intent, tone, and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription. The context is only for correcting spelling of words already spoken.\n- Do not change the meaning of what was said.".to_string(),
             styles: vec![
                 Style {
                     name: "Professional".to_string(),
                     apps: vec![],
-                    prompt: "You are a dictation assistant for professional communication. Clean up the transcript into clear, formal, well-structured text.".to_string(),
+                    prompt: "You are a dictation post-processor for professional communication. You receive raw speech-to-text output and return clean, formal text ready to be typed into a work application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- Elevate the language to a professional, clear, and well-structured tone.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's intent and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
                     stt_model: None,
                     llm_model: None,
                 },
                 Style {
                     name: "Messaging".to_string(),
                     apps: vec![],
-                    prompt: "You are a dictation assistant for casual messaging. Keep the tone informal and conversational. Fix obvious errors but preserve the casual voice.".to_string(),
+                    prompt: "You are a dictation post-processor for casual messaging. You receive raw speech-to-text output and return clean, conversational text ready to be sent in a chat or text message.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning or add personality.\n- Fix obvious spelling and grammar errors, but keep the tone informal and natural.\n- Use casual punctuation\u{2014}lowercase is fine, fragments are OK.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's voice and conversational style exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
                     stt_model: None,
                     llm_model: None,
                 },
@@ -947,38 +931,28 @@ impl Default for PasteConfig {
     }
 }
 
-pub fn config_dir_path() -> Result<PathBuf> {
-    let root =
-        dirs::data_local_dir().context("failed to resolve local application data directory")?;
-    Ok(root.join("glide"))
+// --- Keyring helpers for secure API key storage ---
+
+fn load_key_from_keyring(provider: &str) -> String {
+    keyring::Entry::new(&format!("glide-{provider}"), "api-key")
+        .and_then(|e| e.get_password())
+        .unwrap_or_default()
 }
 
-pub fn config_path() -> Result<PathBuf> {
-    Ok(config_dir_path()?.join("config.toml"))
+fn save_key_to_keyring(provider: &str, key: &str) {
+    if let Ok(entry) = keyring::Entry::new(&format!("glide-{provider}"), "api-key") {
+        // Only write to keyring if the value actually changed — avoids macOS password prompts
+        let current = entry.get_password().unwrap_or_default();
+        if current == key {
+            return;
+        }
+        if key.trim().is_empty() {
+            let _ = entry.delete_credential();
+        } else {
+            let _ = entry.set_password(key);
+        }
+    }
 }
-
-/// Returns the old ~/.config/glide/config.toml path for migration purposes.
-fn legacy_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|root| root.join("glide").join("config.toml"))
-}
-
-#[cfg(unix)]
-fn set_file_permissions(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_file_permissions(_path: &std::path::Path) {}
-
-#[cfg(unix)]
-fn set_dir_permissions(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
-}
-
-#[cfg(not(unix))]
-fn set_dir_permissions(_path: &std::path::Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -1061,10 +1035,14 @@ mod tests {
     }
 
     #[test]
-    fn test_hotkey_from_key_name() {
-        assert_eq!(HotkeyTrigger::from_key_name("f8"), HotkeyTrigger::F8);
-        assert_eq!(HotkeyTrigger::from_key_name("alt"), HotkeyTrigger::Option);
-        assert_eq!(HotkeyTrigger::from_key_name("space"), HotkeyTrigger::Custom(49));
+    fn test_hotkey_from_keycode() {
+        assert_eq!(HotkeyTrigger::from_keycode(100), HotkeyTrigger::F8);
+        assert_eq!(HotkeyTrigger::from_keycode(58), HotkeyTrigger::Custom(58)); // Left Option
+        assert_eq!(HotkeyTrigger::from_keycode(61), HotkeyTrigger::Custom(61)); // Right Option
+        assert_eq!(HotkeyTrigger::from_keycode(55), HotkeyTrigger::Custom(55)); // Left Cmd
+        assert_eq!(HotkeyTrigger::from_keycode(54), HotkeyTrigger::Custom(54)); // Right Cmd
+        assert_eq!(HotkeyTrigger::from_keycode(63), HotkeyTrigger::Custom(63)); // Fn
+        assert_eq!(HotkeyTrigger::from_keycode(49), HotkeyTrigger::Custom(49)); // Space
     }
 
     #[test]

@@ -169,6 +169,25 @@ unsafe extern "C" fn event_tap_callback(
 ) -> ffi::CGEventRef {
     let ctx = unsafe { &mut *(user_info as *mut TapContext) };
     let keycode = unsafe { ffi::CGEventGetIntegerValueField(event, ffi::kCGKeyboardEventKeycode) } as u16;
+
+    // If the UI is recording a new hotkey, capture this keycode and skip normal handling.
+    if ctx.shared.hotkey_recording.load(std::sync::atomic::Ordering::SeqCst) {
+        let is_key_event = event_type == ffi::kCGEventKeyDown || event_type == ffi::kCGEventFlagsChanged;
+        if is_key_event {
+            // For modifier keys via flagsChanged, only record on press (not release)
+            if event_type == ffi::kCGEventFlagsChanged {
+                let flags = unsafe { ffi::CGEventGetFlags(event) };
+                let flag = crate::config::modifier_flag_for_keycode(keycode);
+                if flag != 0 && (flags & flag == 0) {
+                    // This is a modifier release, ignore it
+                    return event;
+                }
+            }
+            ctx.shared.record_keycode(keycode);
+        }
+        return event;
+    }
+
     let trigger = ctx.shared.config().hotkey.trigger;
 
     match event_type {

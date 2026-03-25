@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -41,6 +42,12 @@ impl RuntimeStatus {
 #[derive(Debug)]
 pub struct SharedAppState {
     inner: Mutex<AppState>,
+    /// When true, the CGEventTap will capture the next keycode for hotkey recording.
+    pub hotkey_recording: AtomicBool,
+    /// Raw keycode captured by the event tap during recording.
+    recorded_keycode: AtomicU16,
+    /// Set to true once a keycode has been recorded.
+    keycode_ready: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -66,6 +73,32 @@ impl SharedAppState {
                 input_devices: Vec::new(),
                 permission_hint: String::new(),
             }),
+            hotkey_recording: AtomicBool::new(false),
+            recorded_keycode: AtomicU16::new(0),
+            keycode_ready: AtomicBool::new(false),
+        }
+    }
+
+    /// Start hotkey recording — the CGEventTap will capture the next key press.
+    pub fn start_hotkey_recording(&self) {
+        self.keycode_ready.store(false, Ordering::SeqCst);
+        self.recorded_keycode.store(0, Ordering::SeqCst);
+        self.hotkey_recording.store(true, Ordering::SeqCst);
+    }
+
+    /// Called by the event tap when a key is pressed during recording.
+    pub fn record_keycode(&self, code: u16) {
+        self.recorded_keycode.store(code, Ordering::SeqCst);
+        self.hotkey_recording.store(false, Ordering::SeqCst);
+        self.keycode_ready.store(true, Ordering::SeqCst);
+    }
+
+    /// Poll for a recorded keycode. Returns Some(code) once, then resets.
+    pub fn poll_recorded_keycode(&self) -> Option<u16> {
+        if self.keycode_ready.swap(false, Ordering::SeqCst) {
+            Some(self.recorded_keycode.load(Ordering::SeqCst))
+        } else {
+            None
         }
     }
 
