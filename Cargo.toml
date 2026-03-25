@@ -20,9 +20,8 @@ spectrum-analyzer = "1"
 # HTTP client for STT and LLM API calls
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "blocking"] }
 
-# Clipboard and simulated paste
+# Clipboard (paste via CoreGraphics FFI)
 arboard = "3"
-enigo = "0.2"
 
 # Configuration
 serde = { version = "1", features = ["derive"] }

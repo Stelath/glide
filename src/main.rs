@@ -41,13 +41,15 @@ fn main() {
 
         hotkey::start_listener(shared.clone(), runtime);
 
-        // Create overlay controller that opens/closes the EQ overlay on hotkey press/release
+        // Create overlay controller and store as a GPUI global so it lives for the entire app,
+        // independent of any window (the settings window may be closed while dictation is active).
         let overlay_shared = shared.clone();
-        let _overlay_controller = cx.new(|cx| {
+        let overlay_entity = cx.new(|cx| {
             let controller = overlay::OverlayController::new(overlay_shared);
             controller.start_polling(cx);
             controller
         });
+        cx.set_global(overlay::OverlayHandle(overlay_entity));
 
         let shared_for_window = shared.clone();
         let settings_window = cx.open_window(

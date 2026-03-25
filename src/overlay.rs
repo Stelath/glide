@@ -1,10 +1,15 @@
 use std::time::Duration;
 
 use gpui::{
-    div, hsla, point, px, size, AppContext, Bounds, Context, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, Styled, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions,
+    div, hsla, point, px, size, AppContext, Bounds, Context, Entity, Global,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
+
+/// App-lifetime handle that keeps the OverlayController entity alive via GPUI's global storage.
+#[allow(dead_code)] // The Entity is kept alive by its ref count, not by field access
+pub struct OverlayHandle(pub Entity<OverlayController>);
+impl Global for OverlayHandle {}
 
 use crate::app::{OverlayPhase, SharedState};
 use crate::config::{OverlayConfig, OverlayStyle};
@@ -255,7 +260,6 @@ impl OverlayController {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) {
-        eprintln!("[glide] overlay controller: polling started");
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -264,7 +268,6 @@ impl OverlayController {
                 let should_continue = this
                     .update(cx, |controller, cx| {
                         let phase = controller.shared.overlay_phase();
-                        eprintln!("[glide] overlay: phase={:?}, has_window={}", phase, controller.window_handle.is_some());
                         match phase {
                             OverlayPhase::Recording if controller.window_handle.is_none() => {
                                 controller.open_overlay_window(cx);
