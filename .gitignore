@@ -20,6 +20,7 @@ target/
 
 # Screenshots / images (not source assets)
 *.png
+!assets/icons/*.png
 
 # Environment / secrets
 .env
