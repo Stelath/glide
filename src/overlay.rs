@@ -33,18 +33,12 @@ const NOTCH_BAR_TOP_INSET: f64 = 6.0;
 const NOTCH_BAR_MAX_HEIGHT: f64 = 40.0;
 const NOTCH_DOT_BOTTOM_INSET: f64 = 12.0;
 
-// -- Notch glow constants --------------------------------------------------
-/// Extra padding around the notch for glow shadow room.
+// Notch glow constants
 const GLOW_PADDING: f64 = 28.0;
-/// Stroke width for the static glow ring.
 const GLOW_STROKE_WIDTH: f64 = 5.5;
-/// Shadow blur radius for the static ring.
 const GLOW_SHADOW_RADIUS: f64 = 20.0;
-/// Bottom corner radius for the glow path.
 const GLOW_CORNER_RADIUS: f64 = 14.0;
-/// Duration of one bounce direction (seconds). Full cycle = 2x with autoreverses.
 const GLOW_ORBIT_DURATION: f64 = 1.4;
-/// Visible dash length of the comet head+tail.
 const GLOW_COMET_LENGTH: f64 = 120.0;
 
 // ---------------------------------------------------------------------------
@@ -71,7 +65,6 @@ unsafe extern "C" {
         path: *mut c_void, m: *const c_void,
         x1: f64, y1: f64, x2: f64, y2: f64, radius: f64,
     );
-    fn CGPathCloseSubpath(path: *mut c_void);
     fn CGPathRelease(path: *mut c_void);
 }
 
@@ -390,10 +383,6 @@ fn close_notch_panel(state: &NotchPanelState) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Native NSPanel for notch glow mode
-// ---------------------------------------------------------------------------
-
 struct NotchGlowState {
     panel: *mut c_void,
 }
@@ -405,7 +394,6 @@ unsafe impl Sync for NotchGlowState {}
 fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
     let (notch_w, notch_h) = crate::config::notch_dimensions()?;
 
-    // Panel is larger than the notch to contain the glow shadow
     let panel_w = notch_w + 2.0 * GLOW_PADDING;
     let panel_h = notch_h + GLOW_PADDING;
     let r = GLOW_CORNER_RADIUS;
@@ -427,12 +415,9 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         if main_screen.is_null() { return None; }
         let screen_frame = msg_rect(main_screen, sel_registerName(b"frame\0".as_ptr()));
 
-        // Position: centered horizontally, top of screen
         let x = (screen_frame.w - panel_w) / 2.0;
         let y_final = screen_frame.y + screen_frame.h - panel_h;
-        let y_hidden = screen_frame.y + screen_frame.h; // start above screen
-
-        // Create NSPanel (borderless + nonactivating)
+        let y_hidden = screen_frame.y + screen_frame.h;
         let ns_panel_class = objc_getClass(b"NSPanel\0".as_ptr());
         let panel = objc_msgSend(ns_panel_class, sel_registerName(b"alloc\0".as_ptr()));
         let content_rect = NSRect { x, y: y_hidden, w: panel_w, h: panel_h };
@@ -446,7 +431,6 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         );
         if panel.is_null() { return None; }
 
-        // Configure panel — fully transparent, above everything
         let clear_color = objc_msgSend(
             objc_getClass(b"NSColor\0".as_ptr()),
             sel_registerName(b"clearColor\0".as_ptr()),
@@ -459,7 +443,6 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         msg_u64(panel, sel_registerName(b"setCollectionBehavior:\0".as_ptr()), 1 << 0);
         msg_bool(panel, sel_registerName(b"setHidesOnDeactivate:\0".as_ptr()), false);
 
-        // Content view — layer-backed, transparent
         let ns_view_class = objc_getClass(b"NSView\0".as_ptr());
         let content_view = objc_msgSend(ns_view_class, sel_registerName(b"alloc\0".as_ptr()));
         let content_view = objc_msgSend(content_view, sel_registerName(b"init\0".as_ptr()));
@@ -467,20 +450,12 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         msg_set_rect(content_view, sel_registerName(b"setFrame:\0".as_ptr()), view_rect, false);
         msg_bool(content_view, sel_registerName(b"setWantsLayer:\0".as_ptr()), true);
         let root_layer = objc_msgSend(content_view, sel_registerName(b"layer\0".as_ptr()));
-        // Transparent background — no setBackgroundColor on the layer
         let clear_cg = objc_msgSend(clear_color, sel_registerName(b"CGColor\0".as_ptr()));
         msg_ptr(root_layer, sel_registerName(b"setBackgroundColor:\0".as_ptr()), clear_cg);
 
         msg_ptr(panel, sel_registerName(b"setContentView:\0".as_ptr()), content_view);
 
-        // -----------------------------------------------------------
-        // Build CGPath — closed rectangle with rounded bottom corners
-        // tracing the notch outline. The top segment is hidden behind
-        // the physical notch/bezel.
-        // -----------------------------------------------------------
-        // Path coordinates are in the content view's local space.
-        // The notch outline is inset by GLOW_PADDING on left/right
-        // and sits at the top of the panel (y = panel_h is top in macOS).
+        // U-shaped path tracing the notch outline
         let left = GLOW_PADDING;
         let right = panel_w - GLOW_PADDING;
         let top = panel_h;
@@ -488,8 +463,6 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
 
         let cg_path = CGPathCreateMutable();
         let null_ptr = std::ptr::null::<c_void>();
-        // Open U-shape: top-left → down left → across bottom → up right → top-right
-        // No close — comet bounces corner to corner instead of orbiting.
         CGPathMoveToPoint(cg_path, null_ptr, left, top);
         CGPathAddLineToPoint(cg_path, null_ptr, left, bottom + r);
         CGPathAddArcToPoint(cg_path, null_ptr, left, bottom, left + r, bottom, r);
@@ -497,56 +470,36 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         CGPathAddArcToPoint(cg_path, null_ptr, right, bottom, right, bottom + r, r);
         CGPathAddLineToPoint(cg_path, null_ptr, right, top);
 
-        // Path length of the visible U-shape (no top segment)
-        let path_w = right - left;
-        let vert = top - bottom - r;
-        let horiz_bottom = path_w - 2.0 * r;
-        let arcs = std::f64::consts::PI * r; // two quarter-arcs
-        let path_length = 2.0 * vert + horiz_bottom + arcs;
 
-        // -----------------------------------------------------------
-        // White color for glow (shared)
-        // -----------------------------------------------------------
-        type MsgSendF64F64 = unsafe extern "C" fn(*mut c_void, *mut c_void, f64, f64) -> *mut c_void;
-        let msg_f64_f64: MsgSendF64F64 = std::mem::transmute(objc_msgSend as *const ());
         type MsgSendCGSize = unsafe extern "C" fn(*mut c_void, *mut c_void, f64, f64);
         let msg_cgsize: MsgSendCGSize = std::mem::transmute(objc_msgSend as *const ());
-
-        let ns_color_class = objc_getClass(b"NSColor\0".as_ptr());
-
-        // Light blue color for glow
         type MsgSendRGBA = unsafe extern "C" fn(*mut c_void, *mut c_void, f64, f64, f64, f64) -> *mut c_void;
         let msg_rgba: MsgSendRGBA = std::mem::transmute(objc_msgSend as *const ());
+
+        let ns_color_class = objc_getClass(b"NSColor\0".as_ptr());
         let rgba_sel = sel_registerName(b"colorWithRed:green:blue:alpha:\0".as_ptr());
 
         let dim_color = msg_rgba(ns_color_class, rgba_sel, 0.2, 0.5, 1.0, 0.20);
-        let dim_white_cg = objc_msgSend(dim_color, sel_registerName(b"CGColor\0".as_ptr()));
+        let dim_cg = objc_msgSend(dim_color, sel_registerName(b"CGColor\0".as_ptr()));
 
         let bright_color = msg_rgba(ns_color_class, rgba_sel, 0.2, 0.5, 1.0, 1.0);
-        let bright_white_cg = objc_msgSend(bright_color, sel_registerName(b"CGColor\0".as_ptr()));
+        let bright_cg = objc_msgSend(bright_color, sel_registerName(b"CGColor\0".as_ptr()));
 
         let shape_class = objc_getClass(b"CAShapeLayer\0".as_ptr());
 
-        // -----------------------------------------------------------
-        // Layer 1: Static subtle glow ring
-        // -----------------------------------------------------------
+        // Static glow ring
         let glow_layer = objc_msgSend(shape_class, sel_registerName(b"new\0".as_ptr()));
         msg_ptr(glow_layer, sel_registerName(b"setPath:\0".as_ptr()), cg_path);
-        msg_ptr(glow_layer, sel_registerName(b"setStrokeColor:\0".as_ptr()), dim_white_cg);
+        msg_ptr(glow_layer, sel_registerName(b"setStrokeColor:\0".as_ptr()), dim_cg);
         msg_ptr(glow_layer, sel_registerName(b"setFillColor:\0".as_ptr()), std::ptr::null_mut());
         msg_f64(glow_layer, sel_registerName(b"setLineWidth:\0".as_ptr()), GLOW_STROKE_WIDTH + 0.5);
-        // Shadow for glow effect
-        msg_ptr(glow_layer, sel_registerName(b"setShadowColor:\0".as_ptr()), dim_white_cg);
+        msg_ptr(glow_layer, sel_registerName(b"setShadowColor:\0".as_ptr()), dim_cg);
         msg_f64(glow_layer, sel_registerName(b"setShadowRadius:\0".as_ptr()), GLOW_SHADOW_RADIUS);
         msg_f32(glow_layer, sel_registerName(b"setShadowOpacity:\0".as_ptr()), 0.6);
         msg_cgsize(glow_layer, sel_registerName(b"setShadowOffset:\0".as_ptr()), 0.0, 0.0);
         msg_ptr(root_layer, sel_registerName(b"addSublayer:\0".as_ptr()), glow_layer);
 
-        // -----------------------------------------------------------
-        // Gradient comet: full-stroke CAShapeLayer masked by a
-        // sliding CAGradientLayer (clear → white → clear).
-        // The gradient provides a perfectly smooth taper.
-        // -----------------------------------------------------------
+        // Gradient-masked comet: full stroke + sliding CAGradientLayer mask for smooth taper
         let ns_number = objc_getClass(b"NSNumber\0".as_ptr());
         let ca_anim_class = objc_getClass(b"CABasicAnimation\0".as_ptr());
         type MsgSendPtrPtr = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
@@ -560,32 +513,27 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         ) -> *mut c_void;
         let msg_array: MsgSendArrayObjs = std::mem::transmute(objc_msgSend as *const ());
 
-        // Full-stroke comet shape layer (entire path, bright blue)
         let comet = objc_msgSend(shape_class, sel_registerName(b"new\0".as_ptr()));
         msg_ptr(comet, sel_registerName(b"setPath:\0".as_ptr()), cg_path);
-        msg_ptr(comet, sel_registerName(b"setStrokeColor:\0".as_ptr()), bright_white_cg);
+        msg_ptr(comet, sel_registerName(b"setStrokeColor:\0".as_ptr()), bright_cg);
         msg_ptr(comet, sel_registerName(b"setFillColor:\0".as_ptr()), std::ptr::null_mut());
         msg_f64(comet, sel_registerName(b"setLineWidth:\0".as_ptr()), GLOW_STROKE_WIDTH + 2.0);
         msg_ptr(comet, sel_registerName(b"setLineCap:\0".as_ptr()), nsstring_cstr(b"round\0"));
-        msg_ptr(comet, sel_registerName(b"setShadowColor:\0".as_ptr()), bright_white_cg);
+        msg_ptr(comet, sel_registerName(b"setShadowColor:\0".as_ptr()), bright_cg);
         msg_f64(comet, sel_registerName(b"setShadowRadius:\0".as_ptr()), GLOW_SHADOW_RADIUS + 6.0);
         msg_f32(comet, sel_registerName(b"setShadowOpacity:\0".as_ptr()), 1.0);
         msg_cgsize(comet, sel_registerName(b"setShadowOffset:\0".as_ptr()), 0.0, 0.0);
 
-        // CAGradientLayer as mask — slides horizontally to create spotlight
         let grad_class = objc_getClass(b"CAGradientLayer\0".as_ptr());
         let grad = objc_msgSend(grad_class, sel_registerName(b"new\0".as_ptr()));
 
-        // Gradient is 3x panel width so clear areas extend beyond edges
         let grad_w = panel_w * 3.0;
         let grad_rect = NSRect { x: -panel_w, y: 0.0, w: grad_w, h: panel_h };
         msg_set_cg_rect(grad, sel_registerName(b"setFrame:\0".as_ptr()), grad_rect);
 
-        // Horizontal gradient
         msg_set_point(grad, sel_registerName(b"setStartPoint:\0".as_ptr()), 0.0, 0.5);
         msg_set_point(grad, sel_registerName(b"setEndPoint:\0".as_ptr()), 1.0, 0.5);
 
-        // Colors: clear → white → clear (spotlight in the center third)
         let clear_cg = objc_msgSend(
             objc_msgSend(ns_color_class, sel_registerName(b"clearColor\0".as_ptr())),
             sel_registerName(b"CGColor\0".as_ptr()),
@@ -602,9 +550,8 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         );
         msg_ptr(grad, sel_registerName(b"setColors:\0".as_ptr()), colors_arr);
 
-        // Locations: taper width is ~GLOW_COMET_LENGTH relative to gradient width
         let spot_half = (GLOW_COMET_LENGTH / grad_w) / 2.0;
-        let center = 0.5; // center of gradient
+        let center = 0.5;
         let locs: [*mut c_void; 5] = [
             msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), 0.0),
             msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), center - spot_half),
@@ -619,12 +566,9 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         );
         msg_ptr(grad, sel_registerName(b"setLocations:\0".as_ptr()), locs_arr);
 
-        // Set gradient as mask on the comet layer
         msg_ptr(comet, sel_registerName(b"setMask:\0".as_ptr()), grad);
         msg_ptr(root_layer, sel_registerName(b"addSublayer:\0".as_ptr()), comet);
 
-        // Animate the gradient's position to slide the spotlight
-        // Gradient starts shifted left, slides right, autoreverses
         let timing = msg_ptr(
             objc_getClass(b"CAMediaTimingFunction\0".as_ptr()),
             sel_registerName(b"functionWithName:\0".as_ptr()),
@@ -636,9 +580,8 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
             sel_registerName(b"animationWithKeyPath:\0".as_ptr()),
             nsstring_cstr(b"position.x\0"),
         );
-        // Slide from left edge to right edge of the panel
-        let from_x = 0.0;          // spotlight at left edge
-        let to_x = panel_w;       // spotlight at right edge
+        let from_x = 0.0;
+        let to_x = panel_w;
         msg_ptr(anim, sel_registerName(b"setFromValue:\0".as_ptr()),
             msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), from_x));
         msg_ptr(anim, sel_registerName(b"setToValue:\0".as_ptr()),
@@ -654,12 +597,9 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
             nsstring_cstr(b"slide\0"),
         );
 
-        // Release path
         CGPathRelease(cg_path);
 
-        // -----------------------------------------------------------
-        // Show panel and animate slide-down
-        // -----------------------------------------------------------
+        // Slide-in animation
         objc_msgSend(panel, sel_registerName(b"orderFrontRegardless\0".as_ptr()));
 
         let ns_anim = objc_getClass(b"NSAnimationContext\0".as_ptr());
@@ -688,7 +628,6 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
     }
 }
 
-/// Close the notch glow panel.
 fn close_notch_glow_panel(state: &NotchGlowState) {
     unsafe {
         objc_msgSend(state.panel, sel_registerName(b"orderOut:\0".as_ptr()));

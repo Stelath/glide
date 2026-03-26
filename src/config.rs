@@ -997,7 +997,6 @@ pub fn notch_dimensions() -> Option<(f64, f64)> {
         }
 
         let nw = frame.w - left_area.w - right_area.w;
-        // The auxiliary area height equals the notch/menu bar height
         let nh = left_area.h;
         if nw > 0.0 && nh > 0.0 {
             Some((nw, nh))
