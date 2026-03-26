@@ -43,9 +43,9 @@ const GLOW_SHADOW_RADIUS: f64 = 20.0;
 /// Bottom corner radius for the glow path.
 const GLOW_CORNER_RADIUS: f64 = 14.0;
 /// Duration of one bounce direction (seconds). Full cycle = 2x with autoreverses.
-const GLOW_ORBIT_DURATION: f64 = 1.2;
+const GLOW_ORBIT_DURATION: f64 = 1.4;
 /// Visible dash length of the comet head+tail.
-const GLOW_COMET_LENGTH: f64 = 60.0;
+const GLOW_COMET_LENGTH: f64 = 120.0;
 
 // ---------------------------------------------------------------------------
 // Native NSPanel FFI for notch mode
@@ -519,10 +519,10 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         let msg_rgba: MsgSendRGBA = std::mem::transmute(objc_msgSend as *const ());
         let rgba_sel = sel_registerName(b"colorWithRed:green:blue:alpha:\0".as_ptr());
 
-        let dim_color = msg_rgba(ns_color_class, rgba_sel, 0.4, 0.7, 1.0, 0.20);
+        let dim_color = msg_rgba(ns_color_class, rgba_sel, 0.2, 0.5, 1.0, 0.20);
         let dim_white_cg = objc_msgSend(dim_color, sel_registerName(b"CGColor\0".as_ptr()));
 
-        let bright_color = msg_rgba(ns_color_class, rgba_sel, 0.4, 0.7, 1.0, 0.9);
+        let bright_color = msg_rgba(ns_color_class, rgba_sel, 0.2, 0.5, 1.0, 1.0);
         let bright_white_cg = objc_msgSend(bright_color, sel_registerName(b"CGColor\0".as_ptr()));
 
         let shape_class = objc_getClass(b"CAShapeLayer\0".as_ptr());
@@ -543,61 +543,118 @@ fn create_notch_glow_panel() -> Option<Arc<Mutex<NotchGlowState>>> {
         msg_ptr(root_layer, sel_registerName(b"addSublayer:\0".as_ptr()), glow_layer);
 
         // -----------------------------------------------------------
-        // Single comet bouncing corner-to-corner.
+        // Gradient comet: full-stroke CAShapeLayer masked by a
+        // sliding CAGradientLayer (clear → white → clear).
+        // The gradient provides a perfectly smooth taper.
         // -----------------------------------------------------------
-        let comet_frac = (GLOW_COMET_LENGTH / path_length).clamp(0.10, 0.35);
         let ns_number = objc_getClass(b"NSNumber\0".as_ptr());
         let ca_anim_class = objc_getClass(b"CABasicAnimation\0".as_ptr());
         type MsgSendPtrPtr = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
         let msg_ptr_ptr: MsgSendPtrPtr = std::mem::transmute(objc_msgSend as *const ());
+        type MsgSendSetCGRect = unsafe extern "C" fn(*mut c_void, *mut c_void, NSRect);
+        let msg_set_cg_rect: MsgSendSetCGRect = std::mem::transmute(objc_msgSend as *const ());
+        type MsgSendSetCGPoint = unsafe extern "C" fn(*mut c_void, *mut c_void, f64, f64);
+        let msg_set_point: MsgSendSetCGPoint = std::mem::transmute(objc_msgSend as *const ());
+        type MsgSendArrayObjs = unsafe extern "C" fn(
+            *mut c_void, *mut c_void, *const *mut c_void, u64,
+        ) -> *mut c_void;
+        let msg_array: MsgSendArrayObjs = std::mem::transmute(objc_msgSend as *const ());
 
+        // Full-stroke comet shape layer (entire path, bright blue)
+        let comet = objc_msgSend(shape_class, sel_registerName(b"new\0".as_ptr()));
+        msg_ptr(comet, sel_registerName(b"setPath:\0".as_ptr()), cg_path);
+        msg_ptr(comet, sel_registerName(b"setStrokeColor:\0".as_ptr()), bright_white_cg);
+        msg_ptr(comet, sel_registerName(b"setFillColor:\0".as_ptr()), std::ptr::null_mut());
+        msg_f64(comet, sel_registerName(b"setLineWidth:\0".as_ptr()), GLOW_STROKE_WIDTH + 2.0);
+        msg_ptr(comet, sel_registerName(b"setLineCap:\0".as_ptr()), nsstring_cstr(b"round\0"));
+        msg_ptr(comet, sel_registerName(b"setShadowColor:\0".as_ptr()), bright_white_cg);
+        msg_f64(comet, sel_registerName(b"setShadowRadius:\0".as_ptr()), GLOW_SHADOW_RADIUS + 6.0);
+        msg_f32(comet, sel_registerName(b"setShadowOpacity:\0".as_ptr()), 1.0);
+        msg_cgsize(comet, sel_registerName(b"setShadowOffset:\0".as_ptr()), 0.0, 0.0);
+
+        // CAGradientLayer as mask — slides horizontally to create spotlight
+        let grad_class = objc_getClass(b"CAGradientLayer\0".as_ptr());
+        let grad = objc_msgSend(grad_class, sel_registerName(b"new\0".as_ptr()));
+
+        // Gradient is 3x panel width so clear areas extend beyond edges
+        let grad_w = panel_w * 3.0;
+        let grad_rect = NSRect { x: -panel_w, y: 0.0, w: grad_w, h: panel_h };
+        msg_set_cg_rect(grad, sel_registerName(b"setFrame:\0".as_ptr()), grad_rect);
+
+        // Horizontal gradient
+        msg_set_point(grad, sel_registerName(b"setStartPoint:\0".as_ptr()), 0.0, 0.5);
+        msg_set_point(grad, sel_registerName(b"setEndPoint:\0".as_ptr()), 1.0, 0.5);
+
+        // Colors: clear → white → clear (spotlight in the center third)
+        let clear_cg = objc_msgSend(
+            objc_msgSend(ns_color_class, sel_registerName(b"clearColor\0".as_ptr())),
+            sel_registerName(b"CGColor\0".as_ptr()),
+        );
+        let white_cg = objc_msgSend(
+            objc_msgSend(ns_color_class, sel_registerName(b"whiteColor\0".as_ptr())),
+            sel_registerName(b"CGColor\0".as_ptr()),
+        );
+        let colors: [*mut c_void; 5] = [clear_cg, clear_cg, white_cg, clear_cg, clear_cg];
+        let colors_arr = msg_array(
+            objc_getClass(b"NSArray\0".as_ptr()),
+            sel_registerName(b"arrayWithObjects:count:\0".as_ptr()),
+            colors.as_ptr(), 5,
+        );
+        msg_ptr(grad, sel_registerName(b"setColors:\0".as_ptr()), colors_arr);
+
+        // Locations: taper width is ~GLOW_COMET_LENGTH relative to gradient width
+        let spot_half = (GLOW_COMET_LENGTH / grad_w) / 2.0;
+        let center = 0.5; // center of gradient
+        let locs: [*mut c_void; 5] = [
+            msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), 0.0),
+            msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), center - spot_half),
+            msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), center),
+            msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), center + spot_half),
+            msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), 1.0),
+        ];
+        let locs_arr = msg_array(
+            objc_getClass(b"NSArray\0".as_ptr()),
+            sel_registerName(b"arrayWithObjects:count:\0".as_ptr()),
+            locs.as_ptr(), 5,
+        );
+        msg_ptr(grad, sel_registerName(b"setLocations:\0".as_ptr()), locs_arr);
+
+        // Set gradient as mask on the comet layer
+        msg_ptr(comet, sel_registerName(b"setMask:\0".as_ptr()), grad);
+        msg_ptr(root_layer, sel_registerName(b"addSublayer:\0".as_ptr()), comet);
+
+        // Animate the gradient's position to slide the spotlight
+        // Gradient starts shifted left, slides right, autoreverses
         let timing = msg_ptr(
             objc_getClass(b"CAMediaTimingFunction\0".as_ptr()),
             sel_registerName(b"functionWithName:\0".as_ptr()),
             nsstring_cstr(b"easeInEaseOut\0"),
         );
 
-        let comet = objc_msgSend(shape_class, sel_registerName(b"new\0".as_ptr()));
-        msg_ptr(comet, sel_registerName(b"setPath:\0".as_ptr()), cg_path);
-        msg_ptr(comet, sel_registerName(b"setStrokeColor:\0".as_ptr()), bright_white_cg);
-        msg_ptr(comet, sel_registerName(b"setFillColor:\0".as_ptr()), std::ptr::null_mut());
-        msg_f64(comet, sel_registerName(b"setLineWidth:\0".as_ptr()), GLOW_STROKE_WIDTH + 1.5);
-        msg_ptr(comet, sel_registerName(b"setLineCap:\0".as_ptr()), nsstring_cstr(b"round\0"));
-        msg_ptr(comet, sel_registerName(b"setShadowColor:\0".as_ptr()), bright_white_cg);
-        msg_f64(comet, sel_registerName(b"setShadowRadius:\0".as_ptr()), GLOW_SHADOW_RADIUS + 4.0);
-        msg_f32(comet, sel_registerName(b"setShadowOpacity:\0".as_ptr()), 1.0);
-        msg_cgsize(comet, sel_registerName(b"setShadowOffset:\0".as_ptr()), 0.0, 0.0);
-        msg_f64(comet, sel_registerName(b"setStrokeStart:\0".as_ptr()), 0.0);
-        msg_f64(comet, sel_registerName(b"setStrokeEnd:\0".as_ptr()), comet_frac);
-        msg_ptr(root_layer, sel_registerName(b"addSublayer:\0".as_ptr()), comet);
+        let anim = msg_ptr(
+            ca_anim_class,
+            sel_registerName(b"animationWithKeyPath:\0".as_ptr()),
+            nsstring_cstr(b"position.x\0"),
+        );
+        // Slide from left edge to right edge of the panel
+        let from_x = 0.0;          // spotlight at left edge
+        let to_x = panel_w;       // spotlight at right edge
+        msg_ptr(anim, sel_registerName(b"setFromValue:\0".as_ptr()),
+            msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), from_x));
+        msg_ptr(anim, sel_registerName(b"setToValue:\0".as_ptr()),
+            msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), to_x));
+        msg_f64(anim, sel_registerName(b"setDuration:\0".as_ptr()), GLOW_ORBIT_DURATION);
+        msg_f32(anim, sel_registerName(b"setRepeatCount:\0".as_ptr()), f32::MAX);
+        msg_bool(anim, sel_registerName(b"setAutoreverses:\0".as_ptr()), true);
+        msg_ptr(anim, sel_registerName(b"setTimingFunction:\0".as_ptr()), timing);
+        msg_ptr_ptr(
+            grad,
+            sel_registerName(b"addAnimation:forKey:\0".as_ptr()),
+            anim,
+            nsstring_cstr(b"slide\0"),
+        );
 
-        // Helper to build a bounce animation
-        let make_anim = |key: &[u8], from: f64, to: f64| -> *mut c_void {
-            let a = msg_ptr(
-                ca_anim_class,
-                sel_registerName(b"animationWithKeyPath:\0".as_ptr()),
-                nsstring_cstr(key),
-            );
-            msg_ptr(a, sel_registerName(b"setFromValue:\0".as_ptr()),
-                msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), from));
-            msg_ptr(a, sel_registerName(b"setToValue:\0".as_ptr()),
-                msg_f64(ns_number, sel_registerName(b"numberWithDouble:\0".as_ptr()), to));
-            msg_f64(a, sel_registerName(b"setDuration:\0".as_ptr()), GLOW_ORBIT_DURATION);
-            msg_f32(a, sel_registerName(b"setRepeatCount:\0".as_ptr()), f32::MAX);
-            msg_bool(a, sel_registerName(b"setAutoreverses:\0".as_ptr()), true);
-            msg_ptr(a, sel_registerName(b"setTimingFunction:\0".as_ptr()), timing);
-            a
-        };
-
-        // strokeEnd: comet_frac → 1.0, strokeStart: 0 → (1 - comet_frac)
-        let a = make_anim(b"strokeEnd\0", comet_frac, 1.0);
-        msg_ptr_ptr(comet, sel_registerName(b"addAnimation:forKey:\0".as_ptr()),
-            a, nsstring_cstr(b"be\0"));
-        let a = make_anim(b"strokeStart\0", 0.0, 1.0 - comet_frac);
-        msg_ptr_ptr(comet, sel_registerName(b"addAnimation:forKey:\0".as_ptr()),
-            a, nsstring_cstr(b"bs\0"));
-
-        // Layer retains the path; release our reference.
+        // Release path
         CGPathRelease(cg_path);
 
         // -----------------------------------------------------------
