@@ -861,11 +861,17 @@ impl SettingsApp {
 
         // -- Recording Window -------------------------------------------
         let mut style_cards = div().flex().gap_3().flex_1();
+        let has_notch = crate::config::notch_width().is_some();
         for style in OverlayStyle::ALL {
+            // Glow only makes sense on Macs with a notch
+            if style == OverlayStyle::Glow && !has_notch {
+                continue;
+            }
             let is_active = style == current_overlay;
             let icon_text = match style {
                 OverlayStyle::Classic => "▁▂▃▅▃▂▁",
                 OverlayStyle::Mini => "▪▪▪",
+                OverlayStyle::Glow => "◎",
                 OverlayStyle::None => "⊘",
             };
             style_cards = style_cards.child(
@@ -911,6 +917,8 @@ impl SettingsApp {
         }
 
         let current_position = snapshot.config.overlay.position;
+        let show_position = current_overlay != OverlayStyle::Glow
+            && current_overlay != OverlayStyle::None;
         container = container.child(
             section_block("Recording Window", cx)
                 .child(
@@ -919,12 +927,12 @@ impl SettingsApp {
                             setting_row("Style", "Overlay shown while recording", cx)
                         )
                         .child(style_cards)
+                        .when(show_position, |card| card
                         .child(
                             setting_row("Position", "Where the overlay appears on screen", cx),
                         )
                         .child({
                             let mut pos_cards = div().flex().gap_3().flex_1();
-                            let has_notch = crate::config::notch_width().is_some();
                             let positions: Vec<_> = crate::config::OverlayPosition::ALL
                                 .iter()
                                 .filter(|p| **p != crate::config::OverlayPosition::Notch || has_notch)
@@ -969,7 +977,7 @@ impl SettingsApp {
                                 );
                             }
                             pos_cards
-                        }),
+                        })),
                 ),
         );
 
