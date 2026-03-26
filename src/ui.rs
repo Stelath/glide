@@ -139,6 +139,17 @@ impl SettingsApp {
             apply_theme_preference(pref, Some(window), cx);
         }));
 
+        // After the background model fetch completes, apply smart defaults for first-time setup.
+        let shared_for_defaults = shared.clone();
+        cx.spawn(async move |_this, cx| {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            if crate::config::any_provider_verified() {
+                let _ = shared_for_defaults.update_config(|config| {
+                    crate::config::apply_smart_defaults_initial(config);
+                });
+            }
+        }).detach();
+
         Self {
             shared,
             active_pane: SettingsPane::General,
@@ -238,6 +249,17 @@ impl SettingsApp {
             self.last_fetched_openai_key = new_openai_key;
             self.last_fetched_groq_key = new_groq_key;
             crate::config::fetch_all_models(&providers);
+
+            // Re-apply smart defaults once the fetch verifies providers.
+            let shared = self.shared.clone();
+            cx.spawn(async move |_this, cx| {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                if crate::config::any_provider_verified() {
+                    let _ = shared.update_config(|config| {
+                        crate::config::apply_smart_defaults_initial(config);
+                    });
+                }
+            }).detach();
         }
     }
 
@@ -475,6 +497,7 @@ impl SettingsApp {
 
         let shared_stt = self.shared.clone();
         let shared_llm = self.shared.clone();
+        let has_provider = crate::config::any_provider_verified();
 
         container = container.child(
             section_block("Defaults", cx)
@@ -486,36 +509,56 @@ impl SettingsApp {
                         ))
                         .child(field_label("System Prompt", cx))
                         .child(Input::new(&self.default_prompt))
-                        .child(
-                            setting_row("Voice Model", "Default speech-to-text model", cx)
-                                .child(
-                                    model_dropdown_button(
-                                        "default-stt",
-                                        &default_stt,
-                                        &stt_models,
-                                        shared_stt,
-                                        self.default_stt_search.clone(),
-                                        |config, model, provider| {
-                                            config.dictation.stt = ModelSelection { provider, model };
-                                        },
+                        .when(!has_provider, |this| {
+                            this.child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .py_4()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Add a provider in the Providers tab to configure models."),
+                            )
+                        })
+                        .when(has_provider, |this| {
+                            let recommended_stt = crate::config::smart_stt_default()
+                                .map(|s| s.model);
+                            let recommended_llm = crate::config::smart_llm_default()
+                                .map(|s| s.model);
+                            this.child(
+                                setting_row("Voice Model", "Speech-to-text", cx)
+                                    .child(
+                                        model_dropdown_button(
+                                            "default-stt",
+                                            &default_stt,
+                                            &stt_models,
+                                            recommended_stt.as_deref(),
+                                            shared_stt,
+                                            self.default_stt_search.clone(),
+                                            |config, model, provider| {
+                                                config.dictation.stt = ModelSelection { provider, model };
+                                            },
+                                        ),
                                     ),
-                                ),
-                        )
-                        .child(
-                            setting_row("LLM Model", "Default text cleanup model", cx)
-                                .child(
-                                    model_dropdown_button(
-                                        "default-llm",
-                                        &default_llm,
-                                        &llm_models,
-                                        shared_llm,
-                                        self.default_llm_search.clone(),
-                                        |config, model, provider| {
-                                            config.dictation.llm = Some(ModelSelection { provider, model });
-                                        },
+                            )
+                            .child(
+                                setting_row("LLM Model", "Text cleanup", cx)
+                                    .child(
+                                        model_dropdown_button(
+                                            "default-llm",
+                                            &default_llm,
+                                            &llm_models,
+                                            recommended_llm.as_deref(),
+                                            shared_llm,
+                                            self.default_llm_search.clone(),
+                                            |config, model, provider| {
+                                                config.dictation.llm = Some(ModelSelection { provider, model });
+                                            },
+                                        ),
                                     ),
-                                ),
-                        ),
+                            )
+                        }),
                 ),
         );
 
@@ -704,13 +747,13 @@ impl SettingsApp {
                 let stt_display = cfg_styles
                     .get(index)
                     .and_then(|s| s.stt.as_ref())
-                    .map(|sel| sel.model.clone())
-                    .unwrap_or_else(|| format!("Default ({})", default_stt));
+                    .map(|sel| display_model_name(&sel.model).to_string())
+                    .unwrap_or_else(|| format!("Default ({})", display_model_name(&default_stt)));
                 let llm_display = cfg_styles
                     .get(index)
                     .and_then(|s| s.llm.as_ref())
-                    .map(|sel| sel.model.clone())
-                    .unwrap_or_else(|| format!("Default ({})", default_llm));
+                    .map(|sel| display_model_name(&sel.model).to_string())
+                    .unwrap_or_else(|| format!("Default ({})", display_model_name(&default_llm)));
 
                 Some(
                     div()
@@ -1515,13 +1558,19 @@ fn hint_row(text: &str, cx: &App) -> gpui::Div {
         .child(text.to_string())
 }
 
+/// Strip vendor prefixes (e.g. "meta-llama/") from model IDs for display.
+fn display_model_name(id: &str) -> &str {
+    id.rsplit_once('/').map(|(_, name)| name).unwrap_or(id)
+}
+
 /// Render a single model row inside a model picker popover.
 fn model_picker_item(
     model: &crate::config::ModelInfo,
+    recommended: bool,
     cx: &App,
 ) -> gpui::Stateful<gpui::Div> {
     let logo_path = crate::config::asset_path(&model.logo);
-    div()
+    let mut row = div()
         .id(SharedString::from(format!("pick-{}", model.id)))
         .flex()
         .items_center()
@@ -1534,17 +1583,27 @@ fn model_picker_item(
         .child(img(logo_path).w(gpui::px(16.0)).h(gpui::px(16.0)).rounded_sm())
         .child(
             div()
+                .flex_1()
                 .text_sm()
                 .text_color(cx.theme().foreground)
-                .child(model.id.clone()),
-        )
+                .child(display_model_name(&model.id).to_string()),
+        );
+    if recommended {
+        row = row.child(
+            Icon::new(IconName::Star)
+                .size_3()
+                .text_color(cx.theme().muted_foreground),
+        );
+    }
+    row
 }
 
-/// Popover-based model picker with fuzzy search and provider logos.
+/// Popover-based model picker with fuzzy search, provider logos, and recommended star.
 fn model_dropdown_button(
     id: &str,
     current_model: &str,
     models: &[crate::config::ModelInfo],
+    recommended_model: Option<&str>,
     shared: SharedState,
     search_entity: Entity<InputState>,
     updater: fn(&mut GlideConfig, String, Provider),
@@ -1554,14 +1613,20 @@ fn model_dropdown_button(
         .find(|m| m.id == current_model)
         .map(|m| m.logo.clone());
     let models = models.to_vec();
+    let recommended = recommended_model.map(|s| s.to_string());
 
     let popover_id = SharedString::from(format!("model-picker-{id}"));
 
     let trigger = Button::new(SharedString::from(format!("trigger-{id}")))
-        .label(SharedString::from(current_model.to_string()))
         .ghost()
         .small()
-        .compact();
+        .compact()
+        .child(
+            div()
+                .truncate()
+                .max_w(gpui::px(180.0))
+                .child(display_model_name(current_model).to_string()),
+        );
 
     let popover = Popover::new(popover_id)
         .trigger(trigger)
@@ -1574,7 +1639,8 @@ fn model_dropdown_button(
                 let mut scored: Vec<_> = models
                     .iter()
                     .filter_map(|m| {
-                        crate::config::fuzzy_match(&query, &m.id).map(|s| (m, s))
+                        let display = display_model_name(&m.id);
+                        crate::config::fuzzy_match(&query, display).map(|s| (m, s))
                     })
                     .collect();
                 scored.sort_by(|a, b| b.1.cmp(&a.1));
@@ -1583,12 +1649,13 @@ fn model_dropdown_button(
 
             let mut list = div().flex().flex_col().gap_0p5().p_1();
             for model in &filtered {
+                let is_recommended = recommended.as_deref() == Some(&model.id);
                 let model_id = model.id.clone();
                 let model_provider_str = model.provider.clone();
                 let shared = shared.clone();
                 let popover = popover.clone();
                 list = list.child(
-                    model_picker_item(model, cx).on_click(
+                    model_picker_item(model, is_recommended, cx).on_click(
                         move |_, window, cx| {
                             let id = model_id.clone();
                             let provider = crate::config::Provider::from_model_info_provider(&model_provider_str)
@@ -1626,16 +1693,17 @@ fn model_dropdown_button(
                 )
         });
 
-    let mut wrapper = div().flex().items_center().gap_1().flex_shrink_0();
+    let mut wrapper = div().flex().items_center().gap_1().min_w_0().overflow_hidden();
     if let Some(ref logo) = current_logo {
         wrapper = wrapper.child(
             img(crate::config::asset_path(logo))
                 .w(gpui::px(16.0))
                 .h(gpui::px(16.0))
-                .rounded_sm(),
+                .rounded_sm()
+                .flex_shrink_0(),
         );
     }
-    wrapper.child(popover)
+    wrapper.child(div().min_w_0().overflow_hidden().child(popover))
 }
 
 /// Popover-based model picker for per-style overrides, with "Default" option.
@@ -1665,10 +1733,15 @@ fn style_model_dropdown(
     let popover_id = SharedString::from(format!("model-picker-{id}"));
 
     let trigger = Button::new(SharedString::from(format!("trigger-{id}")))
-        .label(SharedString::from(current_display.to_string()))
         .ghost()
         .small()
-        .compact();
+        .compact()
+        .child(
+            div()
+                .truncate()
+                .max_w(gpui::px(180.0))
+                .child(current_display.to_string()),
+        );
 
     let popover = Popover::new(popover_id)
         .trigger(trigger)
@@ -1681,7 +1754,8 @@ fn style_model_dropdown(
                 let mut scored: Vec<_> = models
                     .iter()
                     .filter_map(|m| {
-                        crate::config::fuzzy_match(&query, &m.id).map(|s| (m, s))
+                        let display = display_model_name(&m.id);
+                        crate::config::fuzzy_match(&query, display).map(|s| (m, s))
                     })
                     .collect();
                 scored.sort_by(|a, b| b.1.cmp(&a.1));
@@ -1726,7 +1800,7 @@ fn style_model_dropdown(
                 let shared = shared.clone();
                 let popover = popover.clone();
                 list = list.child(
-                    model_picker_item(model, cx).on_click(
+                    model_picker_item(model, false, cx).on_click(
                         move |_, window, cx| {
                             let id = model_id.clone();
                             let model_provider = model_provider_str_style.clone();
@@ -1773,16 +1847,17 @@ fn style_model_dropdown(
                 )
         });
 
-    let mut wrapper = div().flex().items_center().gap_1().flex_shrink_0();
+    let mut wrapper = div().flex().items_center().gap_1().min_w_0().overflow_hidden();
     if let Some(ref logo) = current_logo {
         wrapper = wrapper.child(
             img(crate::config::asset_path(logo))
                 .w(gpui::px(16.0))
                 .h(gpui::px(16.0))
-                .rounded_sm(),
+                .rounded_sm()
+                .flex_shrink_0(),
         );
     }
-    wrapper.child(popover)
+    wrapper.child(div().min_w_0().overflow_hidden().child(popover))
 }
 
 #[cfg(test)]
