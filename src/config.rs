@@ -963,21 +963,67 @@ pub fn notch_width() -> Option<u32> {
     }
 }
 
+/// Get the width and height of the MacBook notch in logical points, or None if no notch.
+pub fn notch_dimensions() -> Option<(f64, f64)> {
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct NSRect {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    }
+
+    type MsgSendRect = unsafe extern "C" fn(*mut c_void, *mut c_void) -> NSRect;
+
+    unsafe {
+        let ns_screen = objc_getClass(b"NSScreen\0".as_ptr());
+        if ns_screen.is_null() {
+            return None;
+        }
+        let screen = objc_msgSend(ns_screen, sel_registerName(b"mainScreen\0".as_ptr()));
+        if screen.is_null() {
+            return None;
+        }
+
+        let msg_rect: MsgSendRect = std::mem::transmute(objc_msgSend as *const ());
+
+        let frame = msg_rect(screen, sel_registerName(b"frame\0".as_ptr()));
+        let left_area = msg_rect(screen, sel_registerName(b"auxiliaryTopLeftArea\0".as_ptr()));
+        let right_area = msg_rect(screen, sel_registerName(b"auxiliaryTopRightArea\0".as_ptr()));
+
+        if left_area.w == 0.0 && right_area.w == 0.0 {
+            return None;
+        }
+
+        let nw = frame.w - left_area.w - right_area.w;
+        // The auxiliary area height equals the notch/menu bar height
+        let nh = left_area.h;
+        if nw > 0.0 && nh > 0.0 {
+            Some((nw, nh))
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OverlayStyle {
     Classic,
     Mini,
+    Glow,
     None,
 }
 
 impl OverlayStyle {
-    pub const ALL: [Self; 3] = [Self::Classic, Self::Mini, Self::None];
+    pub const ALL: [Self; 4] = [Self::Classic, Self::Mini, Self::Glow, Self::None];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Classic => "Classic",
             Self::Mini => "Mini",
+            Self::Glow => "Glow",
             Self::None => "None",
         }
     }
@@ -1157,6 +1203,7 @@ mod tests {
     fn test_overlay_style_labels() {
         assert_eq!(OverlayStyle::Classic.label(), "Classic");
         assert_eq!(OverlayStyle::Mini.label(), "Mini");
+        assert_eq!(OverlayStyle::Glow.label(), "Glow");
         assert_eq!(OverlayStyle::None.label(), "None");
     }
 
