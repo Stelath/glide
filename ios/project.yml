@@ -1,0 +1,37 @@
+name: Glide
+options:
+  bundleIdPrefix: com.glide
+  deploymentTarget:
+    iOS: "17.0"
+
+settings:
+  SWIFT_VERSION: "6.0"
+
+targets:
+  GlideApp:
+    type: application
+    platform: iOS
+    sources:
+      - GlideApp
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.glide.app
+      INFOPLIST_FILE: GlideApp/Info.plist
+      SWIFT_OBJC_BRIDGING_HEADER: GlideApp/GlideApp-Bridging-Header.h
+      LIBRARY_SEARCH_PATHS:
+        - "$(PROJECT_DIR)/../target/aarch64-apple-ios/debug"
+        - "$(PROJECT_DIR)/../target/aarch64-apple-ios/release"
+        - "$(PROJECT_DIR)/../target/aarch64-apple-ios-sim/debug"
+        - "$(PROJECT_DIR)/../target/aarch64-apple-ios-sim/release"
+      OTHER_LDFLAGS:
+        - "-lglide_core"
+    dependencies:
+      - target: GlideKeyboard
+
+  GlideKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - GlideKeyboard
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.glide.app.keyboard
+      INFOPLIST_FILE: GlideKeyboard/Info.plist
