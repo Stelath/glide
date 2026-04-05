@@ -2,27 +2,21 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "mic.circle.fill")
-                .font(.system(size: 80))
-                .foregroundStyle(.blue)
+        TabView {
+            StylesView()
+                .tabItem {
+                    Label("Styles", systemImage: "paintbrush")
+                }
 
-            Text("Glide")
-                .font(.largeTitle.bold())
+            ProvidersView()
+                .tabItem {
+                    Label("Providers", systemImage: "key")
+                }
 
-            Text("Enable the Glide keyboard in Settings \u{2192} General \u{2192} Keyboard \u{2192} Keyboards to dictate in any app.")
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            Text("Core version: \(coreVersion)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            GeneralView()
+                .tabItem {
+                    Label("General", systemImage: "gear")
+                }
         }
-        .padding()
-    }
-
-    private var coreVersion: String {
-        String(cString: glide_core_version())
     }
 }

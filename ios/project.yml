@@ -1,37 +1,74 @@
 name: Glide
 options:
-  bundleIdPrefix: com.glide
+  bundleIdPrefix: com.stelath.glide
   deploymentTarget:
     iOS: "17.0"
+  createIntermediateGroups: true
 
 settings:
   SWIFT_VERSION: "6.0"
+  DEVELOPMENT_TEAM: KSH6P6Y39N
+  CODE_SIGN_STYLE: Automatic
+  ENABLE_APP_INTENTS_METADATA_GENERATION: NO
+
+schemes:
+  GlideApp:
+    build:
+      targets:
+        GlideApp: all
+    run:
+      executable: GlideApp
+      config: Debug
+    profile:
+      config: Release
 
 targets:
   GlideApp:
     type: application
     platform: iOS
     sources:
-      - GlideApp
+      - path: GlideApp
+        type: syncedFolder
+      - path: Shared
+        type: syncedFolder
     settings:
-      PRODUCT_BUNDLE_IDENTIFIER: com.glide.app
+      PRODUCT_BUNDLE_IDENTIFIER: com.stelath.glide.app
       INFOPLIST_FILE: GlideApp/Info.plist
-      SWIFT_OBJC_BRIDGING_HEADER: GlideApp/GlideApp-Bridging-Header.h
-      LIBRARY_SEARCH_PATHS:
-        - "$(PROJECT_DIR)/../target/aarch64-apple-ios/debug"
-        - "$(PROJECT_DIR)/../target/aarch64-apple-ios/release"
-        - "$(PROJECT_DIR)/../target/aarch64-apple-ios-sim/debug"
-        - "$(PROJECT_DIR)/../target/aarch64-apple-ios-sim/release"
-      OTHER_LDFLAGS:
-        - "-lglide_core"
+      CODE_SIGN_ENTITLEMENTS: GlideApp/GlideApp.entitlements
     dependencies:
+      - sdk: AppIntents.framework
       - target: GlideKeyboard
+      - target: GlideLiveActivity
 
   GlideKeyboard:
     type: app-extension
     platform: iOS
     sources:
-      - GlideKeyboard
+      - path: GlideKeyboard
+        type: syncedFolder
+      - path: Shared
+        type: syncedFolder
     settings:
-      PRODUCT_BUNDLE_IDENTIFIER: com.glide.app.keyboard
+      PRODUCT_BUNDLE_IDENTIFIER: com.stelath.glide.app.keyboard
       INFOPLIST_FILE: GlideKeyboard/Info.plist
+      CODE_SIGN_ENTITLEMENTS: GlideKeyboard/GlideKeyboard.entitlements
+    dependencies:
+      - sdk: AppIntents.framework
+
+  GlideLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: GlideLiveActivity
+        type: syncedFolder
+      - path: Shared
+        type: syncedFolder
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.stelath.glide.app.live-activity
+      INFOPLIST_FILE: GlideLiveActivity/Info.plist
+      CODE_SIGN_ENTITLEMENTS: GlideLiveActivity/GlideLiveActivity.entitlements
+      ENABLE_APP_INTENTS_METADATA_GENERATION: YES
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: AppIntents.framework

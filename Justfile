@@ -75,7 +75,7 @@ _dev-ios:
     xcrun simctl boot "$SIM_NAME" 2>/dev/null || true
     open -a Simulator
     xcrun simctl install "$SIM_NAME" "$APP_PATH"
-    xcrun simctl launch "$SIM_NAME" com.glide.app
+    xcrun simctl launch "$SIM_NAME" com.stelath.glide.app
 
 [private]
 _build-ios:
