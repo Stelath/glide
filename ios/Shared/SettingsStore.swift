@@ -96,6 +96,23 @@ final class SettingsStore {
         reloadFromDisk()
     }
 
+    /// Preview-only initializer — does not read from disk.
+    init(preview: Bool) {
+        store = AppGroupKeyValueStore(appGroupIdentifier: Self.suiteName, fileName: "settings.store")
+        openAIApiKey = ""
+        openAIBaseURL = ProviderInfo.openAI.defaultBaseURL
+        groqApiKey = ""
+        groqBaseURL = ProviderInfo.groq.defaultBaseURL
+        sttProvider = ProviderInfo.openAI.id
+        sttModel = "whisper-1"
+        llmEnabled = false
+        llmProvider = ProviderInfo.openAI.id
+        llmModel = ""
+        systemPrompt = Self.defaultSystemPrompt
+        styles = Self.defaultStyles
+        hasCompletedOnboarding = false
+    }
+
     // MARK: - Reload
 
     func reloadFromDisk() {

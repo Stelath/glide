@@ -52,6 +52,11 @@ final class LiveDictationManager {
         }
     }
 
+    /// Preview-only initializer — inert, does not install observers.
+    init(preview: Bool) {
+        snapshot = LiveDictationSnapshot()
+    }
+
     func startSession(selectedStyleID: UUID? = nil) {
         guard !snapshot.phase.isActive else {
             print("[LiveSession] startSession skipped — already active: \(snapshot.phase)")
