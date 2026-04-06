@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Styles Tab
 
@@ -29,9 +30,10 @@ struct StylesView: View {
                         .frame(width: 34, height: 34)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(liveSession.snapshot.phase.isActive ? Color.orange : Color(.tertiarySystemFill))
+                                .fill(liveSession.snapshot.phase.isActive ? Color.glideAccentBold : Color.glideAccentSurface)
                         )
                         .onTapGesture {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             if liveSession.snapshot.phase.isActive {
                                 liveSession.cancelSession()
                             } else {
@@ -104,7 +106,7 @@ struct StylesView: View {
                                     .font(.caption2.weight(.bold))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 22, height: 22)
-                                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                                    .background(Color.glideSurface, in: RoundedRectangle(cornerRadius: 6))
                             }
                             .buttonStyle(.plain)
                         }
@@ -333,7 +335,7 @@ struct GlideWordmark: View {
                                 let centerOffset = (s.bottom * frameHeight) - (heightDiff / 2)
                                 
                                 RoundedRectangle(cornerRadius: barWidth / 2)
-                                    .fill(Color.accentColor.opacity(0.4 + 0.6 * s.top))
+                                    .fill(Color.glidePrimary.opacity(0.4 + 0.6 * s.top))
                                     .frame(width: barWidth, height: h)
                                     .offset(y: -centerOffset) // Pulses outward from the center of the segment
                             }

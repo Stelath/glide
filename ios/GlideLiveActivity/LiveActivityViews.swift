@@ -46,7 +46,7 @@ struct LockScreenLiveActivityView: View {
             .buttonStyle(.plain)
         }
         .padding(16)
-        .activityBackgroundTint(Color(.secondarySystemBackground))
+        .activityBackgroundTint(Color.glideSurface)
     }
 
     private var statusText: String {
@@ -70,9 +70,9 @@ struct LockScreenLiveActivityView: View {
         case "recording":
             return .red
         case "processing":
-            return .orange
+            return .glidePrimary
         default:
-            return .orange
+            return .glidePrimary
         }
     }
 }

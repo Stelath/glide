@@ -10,7 +10,19 @@ struct GeneralView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("General")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.glideText)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Color(.systemBackground))
+
+                Divider()
+
+                Form {
                 Section("Microphone") {
                     LabeledContent("Status") {
                         HStack(spacing: 6) {
@@ -45,7 +57,8 @@ struct GeneralView: View {
                     LabeledContent("App Version", value: appVersion)
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            }
+            .toolbar(.hidden, for: .navigationBar)
         }
         .onAppear {
             micPermission = AVAudioApplication.shared.recordPermission

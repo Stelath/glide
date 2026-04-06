@@ -16,7 +16,7 @@ struct OnboardingView: View {
         ZStack {
             // Background gradient
             LinearGradient(
-                colors: [Color(.systemBackground), Color(.secondarySystemBackground)],
+                colors: [Color.glideBackground, Color.glideSurface],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -114,7 +114,7 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
-            .tint(.primary)
+            .tint(Color.glidePrimary)
             .controlSize(.large)
             .padding(.horizontal, 32)
             .opacity(stepAppeared ? 1 : 0)
@@ -207,7 +207,7 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .tint(.primary)
+                .tint(Color.glidePrimary)
                 .controlSize(.large)
                 .padding(.horizontal, 32)
                 .opacity(stepAppeared ? 1 : 0)
@@ -303,7 +303,7 @@ private struct WaveformAnimation: View {
 
     private func barColor(for index: Int) -> Color {
         let normalized = Double(index) / Double(barCount - 1)
-        return Color.accentColor.opacity(0.3 + 0.7 * sin(normalized * .pi))
+        return Color.glidePrimary.opacity(0.3 + 0.7 * sin(normalized * .pi))
     }
 }
 
@@ -329,12 +329,12 @@ private struct SettingsPathAnimation: View {
                         .frame(width: 30, height: 30)
                         .background(
                             RoundedRectangle(cornerRadius: 7)
-                                .fill(index == highlightedRow ? Color.accentColor : Color(.tertiarySystemFill))
+                                .fill(index == highlightedRow ? Color.glidePrimary : Color.glideAccentSurface)
                         )
 
                     Text(row.1)
                         .font(.body.weight(index == highlightedRow ? .semibold : .regular))
-                        .foregroundStyle(index == highlightedRow ? .primary : .secondary)
+                        .foregroundStyle(index == highlightedRow ? Color.glideText : .secondary)
 
                     Spacer()
 
@@ -345,14 +345,14 @@ private struct SettingsPathAnimation: View {
                     } else {
                         Image(systemName: "checkmark")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(index == highlightedRow ? Color.accentColor : .clear)
+                            .foregroundStyle(index == highlightedRow ? Color.glidePrimary : .clear)
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(index == highlightedRow ? Color(.tertiarySystemFill) : .clear)
+                        .fill(index == highlightedRow ? Color.glideAccentSurface : .clear)
                 )
 
                 if index < rows.count - 1 {
@@ -364,7 +364,7 @@ private struct SettingsPathAnimation: View {
         .padding(4)
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color(.secondarySystemGroupedBackground))
+                .fill(Color.glideSurface)
         )
         .onAppear { startAnimation() }
     }
@@ -410,7 +410,7 @@ private struct ToggleAnimation: View {
                     .frame(width: 30, height: 30)
                     .background(
                         RoundedRectangle(cornerRadius: 7)
-                            .fill(Color.accentColor)
+                            .fill(Color.glidePrimary)
                     )
 
                 Text("Allow Full Access")
@@ -420,7 +420,7 @@ private struct ToggleAnimation: View {
 
                 // Animated toggle
                 Capsule()
-                    .fill(isOn ? Color.green : Color(.tertiarySystemFill))
+                    .fill(isOn ? Color.green : Color.glideAccentSurface)
                     .frame(width: 51, height: 31)
                     .overlay(alignment: isOn ? .trailing : .leading) {
                         Circle()
@@ -435,7 +435,7 @@ private struct ToggleAnimation: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color(.secondarySystemGroupedBackground))
+                    .fill(Color.glideSurface)
             )
             .padding(.horizontal, 8)
 
@@ -495,7 +495,7 @@ private struct MicrophoneAnimation: View {
                 // Pulsing rings
                 ForEach(0..<3, id: \.self) { ring in
                     Circle()
-                        .stroke(Color.accentColor.opacity(ringOpacity * (1.0 - Double(ring) * 0.3)), lineWidth: 2)
+                        .stroke(Color.glidePrimary.opacity(ringOpacity * (1.0 - Double(ring) * 0.3)), lineWidth: 2)
                         .frame(
                             width: 80 + CGFloat(ring) * 30 * pulseScale,
                             height: 80 + CGFloat(ring) * 30 * pulseScale
@@ -504,12 +504,12 @@ private struct MicrophoneAnimation: View {
 
                 // Mic icon
                 Circle()
-                    .fill(Color.accentColor.opacity(0.15))
+                    .fill(Color.glidePrimary.opacity(0.15))
                     .frame(width: 80, height: 80)
 
                 Image(systemName: "mic.fill")
                     .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.glidePrimary)
             }
         }
         .onAppear {

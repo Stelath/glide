@@ -12,31 +12,44 @@ struct ProvidersView: View {
         @Bindable var settings = settings
 
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    ProviderCard(
-                        provider: .openAI,
-                        apiKey: $settings.openAIApiKey,
-                        baseURL: $settings.openAIBaseURL,
-                        showKey: $showOpenAIKey,
-                        showAdvanced: $showOpenAIAdvanced,
-                        verification: settings.openAIVerification
-                    )
-
-                    ProviderCard(
-                        provider: .groq,
-                        apiKey: $settings.groqApiKey,
-                        baseURL: $settings.groqBaseURL,
-                        showKey: $showGroqKey,
-                        showAdvanced: $showGroqAdvanced,
-                        verification: settings.groqVerification
-                    )
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Providers")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.glideText)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Color(.systemBackground))
+
+                Divider()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        ProviderCard(
+                            provider: .openAI,
+                            apiKey: $settings.openAIApiKey,
+                            baseURL: $settings.openAIBaseURL,
+                            showKey: $showOpenAIKey,
+                            showAdvanced: $showOpenAIAdvanced,
+                            verification: settings.openAIVerification
+                        )
+
+                        ProviderCard(
+                            provider: .groq,
+                            apiKey: $settings.groqApiKey,
+                            baseURL: $settings.groqBaseURL,
+                            showKey: $showGroqKey,
+                            showAdvanced: $showGroqAdvanced,
+                            verification: settings.groqVerification
+                        )
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                }
+                .background(Color(.systemGroupedBackground))
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             .onAppear {
                 if !settings.openAIApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !settings.openAIVerified {
                     settings.scheduleAutoVerify(for: ProviderInfo.openAI.id)
@@ -75,11 +88,10 @@ private struct ProviderCard: View {
         VStack(spacing: 0) {
             // Header
             HStack(spacing: 12) {
-                Image(systemName: provider.symbolName)
-                    .font(.title2.weight(.medium))
-                    .foregroundStyle(providerColor)
+                Image(provider.logoAssetName)
+                    .resizable()
+                    .scaledToFill()
                     .frame(width: 36, height: 36)
-                    .background(providerColor.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -239,7 +251,7 @@ private struct ProviderCard: View {
                 .frame(width: 4)
         case .verifying:
             UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 14)
-                .fill(Color.accentColor.opacity(0.5))
+                .fill(Color.glidePrimary.opacity(0.5))
                 .frame(width: 4)
         case .idle:
             EmptyView()

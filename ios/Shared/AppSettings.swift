@@ -5,19 +5,22 @@ struct ProviderInfo: Identifiable, Hashable, Sendable {
     let displayName: String
     let defaultBaseURL: String
     let symbolName: String
+    let logoAssetName: String
 
     static let openAI = ProviderInfo(
         id: "openai",
         displayName: "OpenAI",
         defaultBaseURL: "https://api.openai.com/v1",
-        symbolName: "sparkles"
+        symbolName: "sparkles",
+        logoAssetName: "ProviderOpenAI"
     )
 
     static let groq = ProviderInfo(
         id: "groq",
         displayName: "Groq",
         defaultBaseURL: "https://api.groq.com/openai/v1",
-        symbolName: "bolt.circle"
+        symbolName: "bolt.circle",
+        logoAssetName: "ProviderGroq"
     )
 
     static let all: [ProviderInfo] = [.openAI, .groq]

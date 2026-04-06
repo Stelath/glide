@@ -9,7 +9,7 @@ struct LiveSessionActiveView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(.systemBackground), Color(.secondarySystemBackground)],
+                colors: [Color.glideBackground, Color.glideSurface],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -62,7 +62,7 @@ struct LiveSessionActiveView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
-                .background(.ultraThinMaterial, in: Capsule())
+                .background(Color.glideSurface, in: Capsule())
                 .opacity(appeared ? 1 : 0)
                 .padding(.bottom, 8)
             }
@@ -106,9 +106,9 @@ struct LiveSessionActiveView: View {
         case .recording:
             return .red
         case .ready:
-            return .orange
+            return .glidePrimary
         case .stopping, .processing:
-            return .orange
+            return .glidePrimary
         default:
             return .secondary
         }
@@ -125,7 +125,7 @@ private struct PulsingMicIcon: View {
         ZStack {
             ForEach(0..<3, id: \.self) { ring in
                 Circle()
-                    .stroke(Color.orange.opacity(ringOpacity * (1.0 - Double(ring) * 0.25)), lineWidth: 2)
+                    .stroke(Color.glidePrimary.opacity(ringOpacity * (1.0 - Double(ring) * 0.25)), lineWidth: 2)
                     .frame(
                         width: 80 + CGFloat(ring) * 30 * pulseScale,
                         height: 80 + CGFloat(ring) * 30 * pulseScale
@@ -133,12 +133,12 @@ private struct PulsingMicIcon: View {
             }
 
             Circle()
-                .fill(Color.orange.opacity(0.15))
+                .fill(Color.glidePrimary.opacity(0.15))
                 .frame(width: 80, height: 80)
 
             Image(systemName: "mic.fill")
                 .font(.system(size: 36, weight: .medium))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Color.glidePrimary)
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
@@ -159,7 +159,7 @@ private struct SwipeRightAnimation: View {
         ZStack {
             // Track line
             Capsule()
-                .fill(Color.secondary.opacity(0.15))
+                .fill(.secondary.opacity(0.15))
                 .frame(width: 120, height: 4)
 
             // Animated hand

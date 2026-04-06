@@ -21,6 +21,7 @@ struct GlideApp: App {
             .animation(.easeInOut(duration: 0.3), value: showLiveSessionScreen)
             .environment(settings)
             .environment(liveSession)
+            .tint(Color.glidePrimary)
             .onOpenURL { url in
                 guard url.scheme == "glide", url.host == "start-session" else { return }
                 guard settings.hasCompletedOnboarding else { return }
