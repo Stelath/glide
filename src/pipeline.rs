@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 
-/// Remove `<think>...</think>` blocks (and variants like `<Thinking>`) from LLM output.
+/// Remove `<think>...</think>` blocks from LLM output.
+/// NOTE: Duplicated in crates/glide-core/src/llm.rs (separate C FFI crate, no shared dependency).
 fn strip_think_tags(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut remaining = text;

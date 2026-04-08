@@ -111,7 +111,7 @@ final class KeyboardViewController: UIInputViewController {
 
     @MainActor
     private func openURLThroughResponderChain(_ url: URL) {
-        let selector = Selector(("openURL:"))
+        let selector = NSSelectorFromString("openURL:")
         var responder: UIResponder? = self
 
         while let current = responder {
@@ -492,19 +492,21 @@ private struct RepeatingKeyButton<Label: View>: View {
 
     private func startRepeating() {
         guard isPressing else { return }
+        let action = self.action
 
         repeatTimer?.invalidate()
         repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { _ in
-            triggerAction()
+            Task { @MainActor in action() }
         }
     }
 
     private func switchToWordDeletionMode() {
         guard isPressing, let longPressAction else { return }
+        let action = longPressAction
 
         repeatTimer?.invalidate()
         repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.16, repeats: true) { _ in
-            trigger(longPressAction)
+            Task { @MainActor in action() }
         }
     }
 
@@ -568,7 +570,7 @@ private struct IdleWaveform: View {
         HStack(spacing: 3) {
             ForEach(0..<barCount, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.glidePrimary.opacity(0.3))
+                    .fill(GlideAccent.current.primary.opacity(0.3))
                     .frame(width: 4, height: idleHeight(for: index))
                     .animation(
                         .easeInOut(duration: 1.8)
@@ -666,7 +668,7 @@ private struct ProcessingAnimation: View {
                 let angle = Double(index) / Double(dotCount) * 360.0
 
                 Circle()
-                    .fill(Color.glidePrimary.opacity(dotOpacity(for: index)))
+                    .fill(GlideAccent.current.primary.opacity(dotOpacity(for: index)))
                     .frame(width: 6, height: 6)
                     .offset(x: morphed ? size * 0.33 : spreadX(for: index))
                     .rotationEffect(.degrees(angle + rotation))

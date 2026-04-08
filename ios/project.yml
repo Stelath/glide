@@ -10,6 +10,10 @@ settings:
   DEVELOPMENT_TEAM: KSH6P6Y39N
   CODE_SIGN_STYLE: Automatic
   ENABLE_APP_INTENTS_METADATA_GENERATION: NO
+  DEAD_CODE_STRIPPING: YES
+  ENABLE_USER_SCRIPT_SANDBOXING: YES
+  ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_EXTENSIONS: YES
+  SWIFT_EMIT_LOC_STRINGS: YES
 
 schemes:
   GlideApp:
@@ -35,6 +39,8 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: com.stelath.glide.app
       INFOPLIST_FILE: GlideApp/Info.plist
       CODE_SIGN_ENTITLEMENTS: GlideApp/GlideApp.entitlements
+      ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+      ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-Blue AppIcon-Orange AppIcon-Slate"
     dependencies:
       - sdk: AppIntents.framework
       - target: GlideKeyboard

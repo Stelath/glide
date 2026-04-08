@@ -148,8 +148,10 @@ fn main() {
             shared: shared.clone(),
         });
 
-        // Apply saved theme preference at startup
-        ui::apply_theme_preference(shared.snapshot().config.app.theme, None, cx);
+        // Apply saved theme preference and dock icon at startup
+        let snap = shared.snapshot();
+        ui::apply_theme_preference(snap.config.app.theme, snap.config.app.accent, None, cx);
+        crate::config::set_dock_icon(snap.config.app.accent);
 
         // --- Actions ---
         cx.on_action(|_: &Quit, cx| cx.quit());
