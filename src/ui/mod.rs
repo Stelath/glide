@@ -1,4 +1,5 @@
 mod helpers;
+pub(crate) mod onboarding;
 mod panes;
 
 use std::time::Duration;
@@ -84,6 +85,14 @@ pub struct SettingsApp {
     last_fetched_groq_key: String,
 
     save_pending: bool,
+
+    // Onboarding overlay state
+    show_onboarding: bool,
+    onboarding_step: onboarding::OnboardingStep,
+    onboarding_perm_state: onboarding::PermissionState,
+    onboarding_selected_trigger: Option<crate::config::HotkeyTrigger>,
+    onboarding_recording_custom: bool,
+
     _subscriptions: Vec<Subscription>,
 }
 
@@ -164,6 +173,38 @@ impl SettingsApp {
         })
         .detach();
 
+        let show_onboarding = !config.app.onboarding_completed;
+
+        // Start permission polling if onboarding is active
+        if show_onboarding {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_secs(2))
+                        .await;
+                    let ok = this.update(cx, |view, cx| {
+                        if !view.show_onboarding {
+                            return false; // stop polling
+                        }
+                        let new = onboarding::PermissionState::check();
+                        let changed = view.onboarding_perm_state.microphone != new.microphone
+                            || view.onboarding_perm_state.accessibility != new.accessibility
+                            || view.onboarding_perm_state.input_monitoring != new.input_monitoring;
+                        if changed {
+                            view.onboarding_perm_state = new;
+                            cx.notify();
+                        }
+                        true // keep polling
+                    });
+                    match ok {
+                        Ok(true) => {}
+                        _ => break,
+                    }
+                }
+            })
+            .detach();
+        }
+
         Self {
             shared,
             active_pane: SettingsPane::General,
@@ -187,6 +228,11 @@ impl SettingsApp {
             last_fetched_openai_key: config.providers.openai.api_key.clone(),
             last_fetched_groq_key: config.providers.groq.api_key.clone(),
             save_pending: false,
+            show_onboarding,
+            onboarding_step: onboarding::OnboardingStep::Welcome,
+            onboarding_perm_state: onboarding::PermissionState::check(),
+            onboarding_selected_trigger: Some(onboarding::default_hotkey_preset()),
+            onboarding_recording_custom: false,
             _subscriptions: subs,
         }
     }
@@ -372,6 +418,10 @@ impl Render for SettingsApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        if self.show_onboarding {
+            return self.render_onboarding_overlay(window, cx).into_any_element();
+        }
+
         let snapshot = self.shared.snapshot();
         let mic_name = if snapshot.config.audio.device == "default" {
             "Default Microphone".to_string()
@@ -439,6 +489,7 @@ impl Render for SettingsApp {
                     )
                     .child(self.render_content(window, cx)),
             )
+            .into_any_element()
     }
 }
 

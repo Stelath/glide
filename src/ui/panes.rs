@@ -912,7 +912,6 @@ impl SettingsApp {
                                             config.app.accent = accent;
                                         });
                                         apply_theme_preference(pref, accent, Some(window), cx);
-                                        crate::config::set_dock_icon(accent);
                                         cx.notify();
                                     })),
                                 );

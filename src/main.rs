@@ -35,6 +35,7 @@ struct SettingsWindowState {
 }
 impl Global for SettingsWindowState {}
 
+
 fn ensure_settings_window(cx: &mut App) {
     let state = cx.global_mut::<SettingsWindowState>();
     // If the handle is still valid, just activate it
@@ -150,21 +151,15 @@ fn main() {
             handle: None,
             shared: shared.clone(),
         });
-
-        // Apply saved theme preference and dock icon at startup
+        // Apply saved theme preference at startup
         let snap = shared.snapshot();
         ui::apply_theme_preference(snap.config.app.theme, snap.config.app.accent, None, cx);
-        crate::config::set_dock_icon(snap.config.app.accent);
 
         // --- Actions ---
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_action(|_: &CloseWindow, cx| {
             let handle = cx.global::<SettingsWindowState>().handle;
             if let Some(handle) = handle {
-                // Defer so the removal happens after the current dispatch cycle.
-                // Don't clear the handle yet — ensure_settings_window checks
-                // validity via handle.update(), which will fail once the
-                // deferred removal is processed.
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |_, window, _| window.remove_window());
                     cx.global_mut::<SettingsWindowState>().handle = None;

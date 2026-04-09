@@ -4,7 +4,7 @@ pub mod providers;
 
 pub use macos::{
     accent_icon_path, app_icon_path, frontmost_app_name, fuzzy_match, list_applications,
-    main_display_size, notch_dimensions, notch_width, preload_app_icons, set_dock_icon,
+    main_display_size, notch_dimensions, notch_width, preload_app_icons,
 };
 pub use models::{
     any_provider_verified, apply_smart_defaults_initial, cached_llm_models,
@@ -106,6 +106,8 @@ pub struct AppConfig {
     pub menu_bar_icon: MenuBarIcon,
     pub theme: ThemePreference,
     pub accent: ColorAccent,
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 impl Default for AppConfig {
@@ -115,6 +117,7 @@ impl Default for AppConfig {
             menu_bar_icon: MenuBarIcon::Default,
             theme: ThemePreference::System,
             accent: ColorAccent::Slate,
+            onboarding_completed: false,
         }
     }
 }
