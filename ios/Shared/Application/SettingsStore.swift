@@ -94,7 +94,7 @@ final class SettingsStore {
         llmModel = ""
         systemPrompt = Self.defaultSystemPrompt
         styles = Self.defaultStyles
-        accent = .purple
+        accent = .slate
         hasCompletedOnboarding = false
 
         reloadFromDisk()
@@ -113,7 +113,7 @@ final class SettingsStore {
         llmModel = ""
         systemPrompt = Self.defaultSystemPrompt
         styles = Self.defaultStyles
-        accent = .purple
+        accent = .slate
         hasCompletedOnboarding = false
     }
 

@@ -30,3 +30,4 @@ ios/*.xcodeproj
 ios/*.xcworkspace
 ios/build/
 ios/DerivedData/
+.omx/

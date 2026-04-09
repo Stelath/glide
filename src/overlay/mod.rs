@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{
-    div, hsla, px, size, point, AppContext, Bounds, Context, Entity, Global,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions,
+    AppContext, Bounds, Context, Entity, Global, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle,
+    WindowKind, WindowOptions, div, hsla, point, px, size,
 };
 
 use crate::app::{OverlayPhase, SharedState};
@@ -38,7 +38,11 @@ pub struct OverlayView {
 }
 
 impl OverlayView {
-    fn new(shared: SharedState, overlay_config: OverlayConfig, bar_color: (f32, f32, f32, f32)) -> Self {
+    fn new(
+        shared: SharedState,
+        overlay_config: OverlayConfig,
+        bar_color: (f32, f32, f32, f32),
+    ) -> Self {
         let bar_count = match overlay_config.style {
             OverlayStyle::Classic => 16,
             OverlayStyle::Glow | OverlayStyle::None => 0,
@@ -93,7 +97,9 @@ impl OverlayView {
                         false
                     })
                     .unwrap_or(true);
-                if should_close { break; }
+                if should_close {
+                    break;
+                }
             }
         })
         .detach();
@@ -112,7 +118,13 @@ impl Render for OverlayView {
     }
 }
 
-fn render_eq(bars: &[f32], w: f32, h: f32, style: OverlayStyle, bar_color: (f32, f32, f32, f32)) -> gpui::Div {
+fn render_eq(
+    bars: &[f32],
+    w: f32,
+    h: f32,
+    style: OverlayStyle,
+    bar_color: (f32, f32, f32, f32),
+) -> gpui::Div {
     let (bar_width, gap) = match style {
         OverlayStyle::Classic => (8.0f32, 4.0f32),
         OverlayStyle::Glow | OverlayStyle::None => (0.0, 0.0),
@@ -194,18 +206,21 @@ fn compute_eq_bars(shared: &SharedState, bar_count: usize) -> Vec<f32> {
     drop(live);
 
     use spectrum_analyzer::scaling::divide_by_N_sqrt;
-    use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
+    use spectrum_analyzer::{FrequencyLimit, samples_fft_to_spectrum};
     let lo_hz: f32 = 80.0;
     let hi_hz: f32 = 8000.0;
     let spectrum = samples_fft_to_spectrum(
-        &samples, sample_rate,
+        &samples,
+        sample_rate,
         FrequencyLimit::Range(lo_hz, hi_hz),
         Some(&divide_by_N_sqrt),
     );
     match spectrum {
         Ok(spectrum) => {
             let data = spectrum.data();
-            if data.is_empty() { return vec![0.0; bar_count]; }
+            if data.is_empty() {
+                return vec![0.0; bar_count];
+            }
             let log_lo = lo_hz.ln();
             let log_hi = hi_hz.ln();
             (0..bar_count)
@@ -214,8 +229,12 @@ fn compute_eq_bars(shared: &SharedState, bar_count: usize) -> Vec<f32> {
                     let t1 = (i + 1) as f32 / bar_count as f32;
                     let freq_lo = (log_lo + t0 * (log_hi - log_lo)).exp();
                     let freq_hi = (log_lo + t1 * (log_hi - log_lo)).exp();
-                    let max_mag = data.iter()
-                        .filter(|(freq, _)| { let f = freq.val(); f >= freq_lo && f < freq_hi })
+                    let max_mag = data
+                        .iter()
+                        .filter(|(freq, _)| {
+                            let f = freq.val();
+                            f >= freq_lo && f < freq_hi
+                        })
                         .map(|(_, mag)| mag.val())
                         .fold(0.0f32, f32::max);
                     (max_mag * 20.0).min(1.0)
@@ -243,7 +262,10 @@ pub struct OverlayController {
 
 impl OverlayController {
     pub fn new(shared: SharedState) -> Self {
-        Self { shared, active: None }
+        Self {
+            shared,
+            active: None,
+        }
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) {
@@ -296,7 +318,9 @@ impl OverlayController {
                         eprintln!("[glide] overlay controller: entity released, stopping poll");
                         false
                     });
-                if !should_continue { break; }
+                if !should_continue {
+                    break;
+                }
             }
         })
         .detach();

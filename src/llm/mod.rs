@@ -24,8 +24,11 @@ pub fn build_provider(
 ) -> Result<Box<dyn LlmProvider>> {
     match provider {
         // Both OpenAI and Groq use the OpenAI-compatible API format
-        Provider::OpenAi | Provider::Groq => {
-            Ok(Box::new(openai::OpenAiLlmProvider::new(provider, model, system_prompt, providers)?))
-        }
+        Provider::OpenAi | Provider::Groq => Ok(Box::new(openai::OpenAiLlmProvider::new(
+            provider,
+            model,
+            system_prompt,
+            providers,
+        )?)),
     }
 }

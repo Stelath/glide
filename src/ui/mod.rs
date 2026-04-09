@@ -4,16 +4,16 @@ mod panes;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, App, Entity, SharedString, Subscription, Window};
+use gpui::{App, Entity, SharedString, Subscription, Window, div};
+use gpui_component::ActiveTheme;
+use gpui_component::Side;
+use gpui_component::Sizable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputEvent, InputState};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem, SidebarToggleButton};
 use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::{Icon, IconName};
-use gpui_component::Sizable;
-use gpui_component::ActiveTheme;
-use gpui_component::Side;
 
 use crate::app::SharedState;
 use crate::config::{ColorAccent, GlideConfig, Style, ThemePreference};
@@ -97,19 +97,21 @@ impl SettingsApp {
 
         let openai_creds = &config.providers.openai;
         let openai_api_key = cx.new(|cx| {
-            InputState::new(window, cx).masked(true).default_value(&openai_creds.api_key)
+            InputState::new(window, cx)
+                .masked(true)
+                .default_value(&openai_creds.api_key)
         });
-        let openai_base_url = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&openai_creds.base_url)
-        });
+        let openai_base_url =
+            cx.new(|cx| InputState::new(window, cx).default_value(&openai_creds.base_url));
 
         let groq_creds = &config.providers.groq;
         let groq_api_key = cx.new(|cx| {
-            InputState::new(window, cx).masked(true).default_value(&groq_creds.api_key)
+            InputState::new(window, cx)
+                .masked(true)
+                .default_value(&groq_creds.api_key)
         });
-        let groq_base_url = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&groq_creds.base_url)
-        });
+        let groq_base_url =
+            cx.new(|cx| InputState::new(window, cx).default_value(&groq_creds.base_url));
 
         let default_prompt = cx.new(|cx| {
             InputState::new(window, cx)
@@ -132,18 +134,24 @@ impl SettingsApp {
             .styles
             .iter()
             .map(|entry| {
-                let (inputs, entry_subs) =
-                    Self::create_style_inputs(entry, window, cx);
+                let (inputs, entry_subs) = Self::create_style_inputs(entry, window, cx);
                 subs.extend(entry_subs);
                 inputs
             })
             .collect();
 
         let theme_shared = shared.clone();
-        subs.push(cx.observe_window_appearance(window, move |_this, window, cx| {
-            let snap = theme_shared.snapshot();
-            apply_theme_preference(snap.config.app.theme, snap.config.app.accent, Some(window), cx);
-        }));
+        subs.push(
+            cx.observe_window_appearance(window, move |_this, window, cx| {
+                let snap = theme_shared.snapshot();
+                apply_theme_preference(
+                    snap.config.app.theme,
+                    snap.config.app.accent,
+                    Some(window),
+                    cx,
+                );
+            }),
+        );
 
         let shared_for_defaults = shared.clone();
         cx.spawn(async move |_this, cx| {
@@ -153,7 +161,8 @@ impl SettingsApp {
                     crate::config::apply_smart_defaults_initial(config);
                 });
             }
-        }).detach();
+        })
+        .detach();
 
         Self {
             shared,
@@ -187,9 +196,7 @@ impl SettingsApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> (StyleInputs, Vec<Subscription>) {
-        let name = cx.new(|cx| {
-            InputState::new(window, cx).default_value(&entry.name)
-        });
+        let name = cx.new(|cx| InputState::new(window, cx).default_value(&entry.name));
         let prompt = cx.new(|cx| {
             InputState::new(window, cx)
                 .auto_grow(3, 12)
@@ -263,21 +270,18 @@ impl SettingsApp {
                         crate::config::apply_smart_defaults_initial(config);
                     });
                 }
-            }).detach();
+            })
+            .detach();
         }
     }
 
     fn draft_from_inputs(&self, cx: &gpui::Context<Self>) -> GlideConfig {
         let mut config = self.shared.snapshot().config;
 
-        config.providers.openai.api_key =
-            self.openai_inputs.api_key.read(cx).value().to_string();
-        config.providers.openai.base_url =
-            self.openai_inputs.base_url.read(cx).value().to_string();
-        config.providers.groq.api_key =
-            self.groq_inputs.api_key.read(cx).value().to_string();
-        config.providers.groq.base_url =
-            self.groq_inputs.base_url.read(cx).value().to_string();
+        config.providers.openai.api_key = self.openai_inputs.api_key.read(cx).value().to_string();
+        config.providers.openai.base_url = self.openai_inputs.base_url.read(cx).value().to_string();
+        config.providers.groq.api_key = self.groq_inputs.api_key.read(cx).value().to_string();
+        config.providers.groq.base_url = self.groq_inputs.base_url.read(cx).value().to_string();
 
         config.dictation.system_prompt = self.default_prompt.read(cx).value().to_string();
 
@@ -303,38 +307,36 @@ impl SettingsApp {
     ) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed;
 
-        Sidebar::new(Side::Left)
-            .collapsed(collapsed)
-            .child(
-                SidebarMenu::new()
-                    .child(
-                        SidebarMenuItem::new("General")
-                            .icon(Icon::new(IconName::Settings))
-                            .active(self.active_pane == SettingsPane::General)
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.active_pane = SettingsPane::General;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        SidebarMenuItem::new("Styles")
-                            .icon(Icon::new(IconName::Palette))
-                            .active(self.active_pane == SettingsPane::Styles)
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.active_pane = SettingsPane::Styles;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        SidebarMenuItem::new("Providers")
-                            .icon(Icon::new(IconName::Globe))
-                            .active(self.active_pane == SettingsPane::Providers)
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.active_pane = SettingsPane::Providers;
-                                cx.notify();
-                            })),
-                    ),
-            )
+        Sidebar::new(Side::Left).collapsed(collapsed).child(
+            SidebarMenu::new()
+                .child(
+                    SidebarMenuItem::new("General")
+                        .icon(Icon::new(IconName::Settings))
+                        .active(self.active_pane == SettingsPane::General)
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.active_pane = SettingsPane::General;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    SidebarMenuItem::new("Styles")
+                        .icon(Icon::new(IconName::Palette))
+                        .active(self.active_pane == SettingsPane::Styles)
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.active_pane = SettingsPane::Styles;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    SidebarMenuItem::new("Providers")
+                        .icon(Icon::new(IconName::Globe))
+                        .active(self.active_pane == SettingsPane::Providers)
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.active_pane = SettingsPane::Providers;
+                            cx.notify();
+                        })),
+                ),
+        )
     }
 
     fn render_content(
@@ -353,15 +355,13 @@ impl SettingsApp {
             .overflow_y_scroll()
             .bg(cx.theme().background)
             .child(match self.active_pane {
-                SettingsPane::Providers => {
-                    self.render_providers_pane(window, cx, &snapshot).into_any_element()
-                }
-                SettingsPane::Styles => {
-                    self.render_styles_pane(window, cx).into_any_element()
-                }
-                SettingsPane::General => {
-                    self.render_general_pane(window, cx, &snapshot).into_any_element()
-                }
+                SettingsPane::Providers => self
+                    .render_providers_pane(window, cx, &snapshot)
+                    .into_any_element(),
+                SettingsPane::Styles => self.render_styles_pane(window, cx).into_any_element(),
+                SettingsPane::General => self
+                    .render_general_pane(window, cx, &snapshot)
+                    .into_any_element(),
             })
     }
 }
@@ -408,8 +408,7 @@ impl Render for SettingsApp {
                                 SidebarToggleButton::left()
                                     .collapsed(self.sidebar_collapsed)
                                     .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.sidebar_collapsed =
-                                            !this.sidebar_collapsed;
+                                        this.sidebar_collapsed = !this.sidebar_collapsed;
                                         cx.notify();
                                     })),
                             )
@@ -426,16 +425,12 @@ impl Render for SettingsApp {
                                             let d = device.clone();
                                             let shared = shared_for_menu.clone();
                                             m = m.item(
-                                                PopupMenuItem::new(SharedString::from(
-                                                    d.clone(),
-                                                ))
-                                                .on_click(move |_, _, _cx| {
-                                                    let _ =
-                                                        shared.update_config(|config| {
-                                                            config.audio.device =
-                                                                d.clone();
+                                                PopupMenuItem::new(SharedString::from(d.clone()))
+                                                    .on_click(move |_, _, _cx| {
+                                                        let _ = shared.update_config(|config| {
+                                                            config.audio.device = d.clone();
                                                         });
-                                                }),
+                                                    }),
                                             );
                                         }
                                         m
@@ -461,17 +456,13 @@ mod tests {
         Arc::new(SharedAppState::new(GlideConfig::default()))
     }
 
-    fn init_and_create_view(
-        cx: &mut TestAppContext,
-    ) -> (Entity<SettingsApp>, VisualTestContext) {
+    fn init_and_create_view(cx: &mut TestAppContext) -> (Entity<SettingsApp>, VisualTestContext) {
         cx.update(|app| {
             gpui_component::init(app);
         });
 
         let shared = test_shared_state();
-        let (view, cx) = cx.add_window_view(|window, cx| {
-            SettingsApp::new(shared, window, cx)
-        });
+        let (view, cx) = cx.add_window_view(|window, cx| SettingsApp::new(shared, window, cx));
         let cx = cx.clone();
         (view, cx)
     }
@@ -532,7 +523,10 @@ mod tests {
                 draft.providers.openai.base_url,
                 defaults.providers.openai.base_url,
             );
-            assert_eq!(draft.dictation.system_prompt, defaults.dictation.system_prompt);
+            assert_eq!(
+                draft.dictation.system_prompt,
+                defaults.dictation.system_prompt
+            );
         });
     }
 
@@ -560,7 +554,8 @@ mod tests {
             assert!(app.save_pending);
         });
 
-        cx.executor().advance_clock(AUTOSAVE_DELAY + std::time::Duration::from_millis(100));
+        cx.executor()
+            .advance_clock(AUTOSAVE_DELAY + std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         cx.read_entity(&view, |app, _| {
@@ -583,8 +578,7 @@ mod tests {
                     stt: None,
                     llm: None,
                 };
-                let (inputs, subs) =
-                    SettingsApp::create_style_inputs(&entry, window, cx);
+                let (inputs, subs) = SettingsApp::create_style_inputs(&entry, window, cx);
                 app.styles.push(inputs);
                 app._subscriptions.extend(subs);
                 cx.notify();
@@ -612,8 +606,7 @@ mod tests {
                         stt: None,
                         llm: None,
                     };
-                    let (inputs, subs) =
-                        SettingsApp::create_style_inputs(&entry, window, cx);
+                    let (inputs, subs) = SettingsApp::create_style_inputs(&entry, window, cx);
                     app.styles.push(inputs);
                     app._subscriptions.extend(subs);
                 }
@@ -788,10 +781,14 @@ mod tests {
         cx.run_until_parked();
 
         cx.read_entity(&view, |app, _| {
-            assert!(app.save_pending, "subscription should have triggered autosave");
+            assert!(
+                app.save_pending,
+                "subscription should have triggered autosave"
+            );
         });
 
-        cx.executor().advance_clock(AUTOSAVE_DELAY + std::time::Duration::from_millis(100));
+        cx.executor()
+            .advance_clock(AUTOSAVE_DELAY + std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         cx.read_entity(&view, |app, _| {

@@ -2,8 +2,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use super::providers::{Provider, ProvidersConfig};
 use super::GlideConfig;
+use super::providers::{Provider, ProvidersConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSelection {
@@ -162,23 +162,67 @@ pub fn apply_smart_defaults_initial(config: &mut GlideConfig) {
 
 fn fallback_stt_models() -> Vec<ModelInfo> {
     let all = vec![
-        ModelInfo { id: "whisper-1".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
-        ModelInfo { id: "whisper-large-v3".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
-        ModelInfo { id: "whisper-large-v3-turbo".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
+        ModelInfo {
+            id: "whisper-1".into(),
+            provider: "OpenAI".into(),
+            logo: "assets/icons/openai.png".into(),
+        },
+        ModelInfo {
+            id: "whisper-large-v3".into(),
+            provider: "Groq".into(),
+            logo: "assets/icons/groq.png".into(),
+        },
+        ModelInfo {
+            id: "whisper-large-v3-turbo".into(),
+            provider: "Groq".into(),
+            logo: "assets/icons/groq.png".into(),
+        },
     ];
     filter_models_by_verified_providers(all)
 }
 
 fn fallback_llm_models() -> Vec<ModelInfo> {
     let all = vec![
-        ModelInfo { id: "gpt-5.4-nano".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
-        ModelInfo { id: "gpt-4o-mini".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
-        ModelInfo { id: "gpt-4o".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
-        ModelInfo { id: "gpt-4-turbo".into(), provider: "OpenAI".into(), logo: "assets/icons/openai.png".into() },
-        ModelInfo { id: "meta-llama/llama-4-scout-17b-16e-instruct".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
-        ModelInfo { id: "llama-3.3-70b-versatile".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
-        ModelInfo { id: "llama-3.1-8b-instant".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
-        ModelInfo { id: "mixtral-8x7b-32768".into(), provider: "Groq".into(), logo: "assets/icons/groq.png".into() },
+        ModelInfo {
+            id: "gpt-5.4-nano".into(),
+            provider: "OpenAI".into(),
+            logo: "assets/icons/openai.png".into(),
+        },
+        ModelInfo {
+            id: "gpt-4o-mini".into(),
+            provider: "OpenAI".into(),
+            logo: "assets/icons/openai.png".into(),
+        },
+        ModelInfo {
+            id: "gpt-4o".into(),
+            provider: "OpenAI".into(),
+            logo: "assets/icons/openai.png".into(),
+        },
+        ModelInfo {
+            id: "gpt-4-turbo".into(),
+            provider: "OpenAI".into(),
+            logo: "assets/icons/openai.png".into(),
+        },
+        ModelInfo {
+            id: "meta-llama/llama-4-scout-17b-16e-instruct".into(),
+            provider: "Groq".into(),
+            logo: "assets/icons/groq.png".into(),
+        },
+        ModelInfo {
+            id: "llama-3.3-70b-versatile".into(),
+            provider: "Groq".into(),
+            logo: "assets/icons/groq.png".into(),
+        },
+        ModelInfo {
+            id: "llama-3.1-8b-instant".into(),
+            provider: "Groq".into(),
+            logo: "assets/icons/groq.png".into(),
+        },
+        ModelInfo {
+            id: "mixtral-8x7b-32768".into(),
+            provider: "Groq".into(),
+            logo: "assets/icons/groq.png".into(),
+        },
     ];
     filter_models_by_verified_providers(all)
 }
@@ -241,12 +285,12 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
         let mut stt = Vec::new();
         let mut llm = Vec::new();
 
-        for (provider, creds) in [
-            (Provider::OpenAi, &openai),
-            (Provider::Groq, &groq),
-        ] {
+        for (provider, creds) in [(Provider::OpenAi, &openai), (Provider::Groq, &groq)] {
             let verified_cache = PROVIDER_VERIFIED.get_or_init(|| Mutex::new([false; 2]));
-            let idx = match provider { Provider::OpenAi => 0, Provider::Groq => 1 };
+            let idx = match provider {
+                Provider::OpenAi => 0,
+                Provider::Groq => 1,
+            };
 
             if creds.api_key.trim().is_empty() || creds.base_url.trim().is_empty() {
                 verified_cache.lock().unwrap()[idx] = false;
@@ -271,8 +315,8 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
 
                     let id_lower = entry.id.to_lowercase();
 
-                    let is_stt = id_lower.contains("whisper")
-                        || id_lower.contains("distil-whisper");
+                    let is_stt =
+                        id_lower.contains("whisper") || id_lower.contains("distil-whisper");
 
                     let info = ModelInfo {
                         id: entry.id,
@@ -325,8 +369,8 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::providers::ProviderCredentials;
+    use super::*;
     use std::sync::Mutex;
 
     static PROVIDER_LOCK: Mutex<()> = Mutex::new(());

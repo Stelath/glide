@@ -1,17 +1,19 @@
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, img, SharedString};
+use gpui::{SharedString, div, img};
+use gpui_component::ActiveTheme;
+use gpui_component::Sizable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::Input;
 use gpui_component::popover::Popover;
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::{Icon, IconName};
-use gpui_component::ActiveTheme;
-use gpui_component::Sizable;
 
 use crate::app::AppSnapshot;
-use crate::config::{ColorAccent, HotkeyTrigger, ModelSelection, OverlayStyle, Style, ThemePreference};
+use crate::config::{
+    ColorAccent, HotkeyTrigger, ModelSelection, OverlayStyle, Style, ThemePreference,
+};
 
 use super::helpers::*;
 use super::{ProviderInputs, SettingsApp, apply_theme_preference};
@@ -56,12 +58,7 @@ impl SettingsApp {
                         .child(chevron),
                 )
                 .when_some(logo_path.clone(), |this, path| {
-                    this.child(
-                        img(path)
-                            .w(gpui::px(24.0))
-                            .h(gpui::px(24.0))
-                            .rounded_md(),
-                    )
+                    this.child(img(path).w(gpui::px(24.0)).h(gpui::px(24.0)).rounded_md())
                 })
                 .child(
                     div()
@@ -97,13 +94,9 @@ impl SettingsApp {
                                 .flex()
                                 .items_center()
                                 .gap_2()
-                                .child(
-                                    div().flex_1().child(
-                                        Input::new(&inputs.api_key)
-                                            .mask_toggle()
-                                            .cleanable(true),
-                                    ),
-                                )
+                                .child(div().flex_1().child(
+                                    Input::new(&inputs.api_key).mask_toggle().cleanable(true),
+                                ))
                                 .when(is_verified, |this| {
                                     this.child(
                                         Icon::new(IconName::Check)
@@ -142,7 +135,10 @@ impl SettingsApp {
         // -- Default Prompt & Models --
         let snapshot = self.shared.snapshot();
         let default_stt = snapshot.config.dictation.stt.model.clone();
-        let default_llm = snapshot.config.dictation.llm
+        let default_llm = snapshot
+            .config
+            .dictation
+            .llm
             .as_ref()
             .map(|s| s.model.clone())
             .unwrap_or_else(|| "Disabled".to_string());
@@ -154,66 +150,60 @@ impl SettingsApp {
         let has_provider = crate::config::any_provider_verified();
 
         container = container.child(
-            section_block("Defaults", cx)
-                .child(
-                    settings_card(cx)
-                        .child(hint_row(
-                            "Used for all applications unless a style overrides it.",
-                            cx,
+            section_block("Defaults", cx).child(
+                settings_card(cx)
+                    .child(hint_row(
+                        "Used for all applications unless a style overrides it.",
+                        cx,
+                    ))
+                    .child(field_label("System Prompt", cx))
+                    .child(Input::new(&self.default_prompt))
+                    .when(!has_provider, |this| {
+                        this.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .py_4()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Add a provider in the Providers tab to configure models."),
+                        )
+                    })
+                    .when(has_provider, |this| {
+                        let recommended_stt = crate::config::smart_stt_default().map(|s| s.model);
+                        let recommended_llm = crate::config::smart_llm_default().map(|s| s.model);
+                        this.child(setting_row("Voice Model", "Speech-to-text", cx).child(
+                            model_dropdown_button(
+                                "default-stt",
+                                &default_stt,
+                                &stt_models,
+                                recommended_stt.as_deref(),
+                                shared_stt,
+                                self.default_stt_search.clone(),
+                                |config, model, provider| {
+                                    config.dictation.stt = ModelSelection { provider, model };
+                                },
+                            ),
                         ))
-                        .child(field_label("System Prompt", cx))
-                        .child(Input::new(&self.default_prompt))
-                        .when(!has_provider, |this| {
-                            this.child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .py_4()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Add a provider in the Providers tab to configure models."),
-                            )
-                        })
-                        .when(has_provider, |this| {
-                            let recommended_stt = crate::config::smart_stt_default()
-                                .map(|s| s.model);
-                            let recommended_llm = crate::config::smart_llm_default()
-                                .map(|s| s.model);
-                            this.child(
-                                setting_row("Voice Model", "Speech-to-text", cx)
-                                    .child(
-                                        model_dropdown_button(
-                                            "default-stt",
-                                            &default_stt,
-                                            &stt_models,
-                                            recommended_stt.as_deref(),
-                                            shared_stt,
-                                            self.default_stt_search.clone(),
-                                            |config, model, provider| {
-                                                config.dictation.stt = ModelSelection { provider, model };
-                                            },
-                                        ),
-                                    ),
-                            )
-                            .child(
-                                setting_row("LLM Model", "Text cleanup", cx)
-                                    .child(
-                                        model_dropdown_button(
-                                            "default-llm",
-                                            &default_llm,
-                                            &llm_models,
-                                            recommended_llm.as_deref(),
-                                            shared_llm,
-                                            self.default_llm_search.clone(),
-                                            |config, model, provider| {
-                                                config.dictation.llm = Some(ModelSelection { provider, model });
-                                            },
-                                        ),
-                                    ),
-                            )
-                        }),
-                ),
+                        .child(
+                            setting_row("LLM Model", "Text cleanup", cx).child(
+                                model_dropdown_button(
+                                    "default-llm",
+                                    &default_llm,
+                                    &llm_models,
+                                    recommended_llm.as_deref(),
+                                    shared_llm,
+                                    self.default_llm_search.clone(),
+                                    |config, model, provider| {
+                                        config.dictation.llm =
+                                            Some(ModelSelection { provider, model });
+                                    },
+                                ),
+                            ),
+                        )
+                    }),
+            ),
         );
 
         // -- Styles (accordion cards) --
@@ -290,26 +280,48 @@ impl SettingsApp {
                 for (ai, app) in apps.iter().take(max_shown).enumerate() {
                     let app_clone = app.clone();
                     let icon_el = if let Some(icon_path) = crate::config::app_icon_path(app) {
-                        img(icon_path).w(gpui::px(20.0)).h(gpui::px(20.0)).rounded_sm().into_any_element()
+                        img(icon_path)
+                            .w(gpui::px(20.0))
+                            .h(gpui::px(20.0))
+                            .rounded_sm()
+                            .into_any_element()
                     } else {
                         let ch = app.chars().next().unwrap_or('?').to_uppercase().to_string();
-                        div().flex().items_center().justify_center()
-                            .w(gpui::px(20.0)).h(gpui::px(20.0)).rounded_sm()
-                            .bg(cx.theme().accent.opacity(0.2)).text_xs()
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(gpui::px(20.0))
+                            .h(gpui::px(20.0))
+                            .rounded_sm()
+                            .bg(cx.theme().accent.opacity(0.2))
+                            .text_xs()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(cx.theme().accent_foreground)
-                            .child(ch).into_any_element()
+                            .child(ch)
+                            .into_any_element()
                     };
                     app_row = app_row.child(
-                        div().id(SharedString::from(format!("app-{index}-{ai}")))
-                            .flex().items_center().gap_1().px_2().py_0p5()
-                            .rounded_md().bg(cx.theme().secondary)
-                            .border_1().border_color(cx.theme().border).text_xs()
+                        div()
+                            .id(SharedString::from(format!("app-{index}-{ai}")))
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(cx.theme().secondary)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .text_xs()
                             .child(icon_el)
                             .child(div().text_color(cx.theme().foreground).child(app.clone()))
                             .child(
                                 Button::new(SharedString::from(format!("rm-app-{index}-{ai}")))
-                                    .label("×").ghost().xsmall().compact()
+                                    .label("×")
+                                    .ghost()
+                                    .xsmall()
+                                    .compact()
                                     .on_click(cx.listener(move |this, _, _window, cx| {
                                         this.styles[index].apps.retain(|a| a != &app_clone);
                                         this.schedule_autosave(cx);
@@ -320,74 +332,132 @@ impl SettingsApp {
                 }
                 if apps.len() > max_shown {
                     app_row = app_row.child(
-                        div().text_xs().text_color(cx.theme().muted_foreground)
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
                             .child(format!("+{}", apps.len() - max_shown)),
                     );
                 }
 
                 let snap = self.shared.snapshot();
-                let all_assigned: std::collections::HashSet<String> = snap.config.dictation.styles.iter()
+                let all_assigned: std::collections::HashSet<String> = snap
+                    .config
+                    .dictation
+                    .styles
+                    .iter()
                     .flat_map(|s| s.apps.iter().cloned())
                     .collect();
-                let popover_apps: Vec<String> = available_apps.iter()
-                    .filter(|a| !all_assigned.contains(*a)).cloned().collect();
+                let popover_apps: Vec<String> = available_apps
+                    .iter()
+                    .filter(|a| !all_assigned.contains(*a))
+                    .cloned()
+                    .collect();
                 let entity_for_apps = cx.weak_entity();
                 let search_entity = style.search.clone();
-                let add_app_popover = Popover::new(SharedString::from(format!("app-picker-{index}")))
-                    .trigger(
-                        Button::new(SharedString::from(format!("add-app-{index}")))
-                            .label("+ Add App").ghost().small().compact(),
-                    )
-                    .content(move |_state, _window, cx| {
-                        let query = search_entity.read(cx).value().to_string();
-                        let mut scored: Vec<(&String, i32)> = popover_apps.iter()
-                            .filter_map(|a| crate::config::fuzzy_match(&query, a).map(|s| (a, s)))
-                            .collect();
-                        scored.sort_by(|a, b| b.1.cmp(&a.1));
-                        let mut grid = div().flex().flex_wrap().gap_2().p_2();
-                        for (app, _) in &scored {
-                            let app_name = (*app).clone();
-                            let entity = entity_for_apps.clone();
-                            let tile_icon = if let Some(p) = crate::config::app_icon_path(app) {
-                                img(p).w(gpui::px(40.0)).h(gpui::px(40.0)).rounded_lg().into_any_element()
-                            } else {
-                                let ch = app.chars().next().unwrap_or('?').to_uppercase().to_string();
-                                div().flex().items_center().justify_center()
-                                    .w(gpui::px(40.0)).h(gpui::px(40.0)).rounded_lg()
-                                    .bg(cx.theme().accent.opacity(0.2)).text_lg()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(cx.theme().accent_foreground)
-                                    .child(ch).into_any_element()
-                            };
-                            grid = grid.child(
-                                div().id(SharedString::from(format!("pick-{app_name}")))
-                                    .flex().flex_col().items_center().gap_1()
-                                    .w(gpui::px(80.0)).py_2().rounded_md().cursor_pointer()
-                                    .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
-                                    .child(tile_icon)
-                                    .child(div().text_xs().text_color(cx.theme().foreground)
-                                        .overflow_x_hidden().max_w(gpui::px(76.0))
-                                        .child(app_name.clone()))
-                                    .on_click(move |_, _, cx| {
-                                        let name = app_name.clone();
-                                        let _ = entity.update(cx, |this, cx| {
-                                            if !this.styles[index].apps.contains(&name) {
-                                                this.styles[index].apps.push(name);
-                                                this.schedule_autosave(cx);
-                                                cx.notify();
-                                            }
-                                        });
-                                    }),
-                            );
-                        }
-                        div().w(gpui::px(380.0)).max_h(gpui::px(400.0))
-                            .flex().flex_col().overflow_hidden()
-                            .child(div().p_2().border_b_1().border_color(cx.theme().border)
-                                .child(Input::new(&search_entity)))
-                            .child(div().id(SharedString::from(format!("app-grid-scroll-{index}")))
-                                .flex_1().overflow_y_scrollbar().child(grid))
-                            .into_any_element()
-                    });
+                let add_app_popover =
+                    Popover::new(SharedString::from(format!("app-picker-{index}")))
+                        .trigger(
+                            Button::new(SharedString::from(format!("add-app-{index}")))
+                                .label("+ Add App")
+                                .ghost()
+                                .small()
+                                .compact(),
+                        )
+                        .content(move |_state, _window, cx| {
+                            let query = search_entity.read(cx).value().to_string();
+                            let mut scored: Vec<(&String, i32)> = popover_apps
+                                .iter()
+                                .filter_map(|a| {
+                                    crate::config::fuzzy_match(&query, a).map(|s| (a, s))
+                                })
+                                .collect();
+                            scored.sort_by(|a, b| b.1.cmp(&a.1));
+                            let mut grid = div().flex().flex_wrap().gap_2().p_2();
+                            for (app, _) in &scored {
+                                let app_name = (*app).clone();
+                                let entity = entity_for_apps.clone();
+                                let tile_icon = if let Some(p) = crate::config::app_icon_path(app) {
+                                    img(p)
+                                        .w(gpui::px(40.0))
+                                        .h(gpui::px(40.0))
+                                        .rounded_lg()
+                                        .into_any_element()
+                                } else {
+                                    let ch = app
+                                        .chars()
+                                        .next()
+                                        .unwrap_or('?')
+                                        .to_uppercase()
+                                        .to_string();
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .w(gpui::px(40.0))
+                                        .h(gpui::px(40.0))
+                                        .rounded_lg()
+                                        .bg(cx.theme().accent.opacity(0.2))
+                                        .text_lg()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(cx.theme().accent_foreground)
+                                        .child(ch)
+                                        .into_any_element()
+                                };
+                                grid = grid.child(
+                                    div()
+                                        .id(SharedString::from(format!("pick-{app_name}")))
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap_1()
+                                        .w(gpui::px(80.0))
+                                        .py_2()
+                                        .rounded_md()
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
+                                        .child(tile_icon)
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().foreground)
+                                                .overflow_x_hidden()
+                                                .max_w(gpui::px(76.0))
+                                                .child(app_name.clone()),
+                                        )
+                                        .on_click(move |_, _, cx| {
+                                            let name = app_name.clone();
+                                            let _ = entity.update(cx, |this, cx| {
+                                                if !this.styles[index].apps.contains(&name) {
+                                                    this.styles[index].apps.push(name);
+                                                    this.schedule_autosave(cx);
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }),
+                                );
+                            }
+                            div()
+                                .w(gpui::px(380.0))
+                                .max_h(gpui::px(400.0))
+                                .flex()
+                                .flex_col()
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .p_2()
+                                        .border_b_1()
+                                        .border_color(cx.theme().border)
+                                        .child(Input::new(&search_entity)),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("app-grid-scroll-{index}")))
+                                        .flex_1()
+                                        .overflow_y_scrollbar()
+                                        .child(grid),
+                                )
+                                .into_any_element()
+                        });
 
                 let name_input = Input::new(&style.name).appearance(false);
 
@@ -415,7 +485,10 @@ impl SettingsApp {
                         .border_color(cx.theme().border)
                         .child(name_input)
                         .child(
-                            div().flex().items_center().gap_2()
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
                                 .child(app_row)
                                 .child(add_app_popover),
                         )
@@ -424,28 +497,24 @@ impl SettingsApp {
                             div()
                                 .flex()
                                 .gap_3()
-                                .child(
-                                    style_model_dropdown(
-                                        &format!("style-stt-{index}"),
-                                        &stt_display,
-                                        &stt_models,
-                                        self.shared.clone(),
-                                        style.stt_model_search.clone(),
-                                        index,
-                                        true,
-                                    ),
-                                )
-                                .child(
-                                    style_model_dropdown(
-                                        &format!("style-llm-{index}"),
-                                        &llm_display,
-                                        &llm_models,
-                                        self.shared.clone(),
-                                        style.llm_model_search.clone(),
-                                        index,
-                                        false,
-                                    ),
-                                ),
+                                .child(style_model_dropdown(
+                                    &format!("style-stt-{index}"),
+                                    &stt_display,
+                                    &stt_models,
+                                    self.shared.clone(),
+                                    style.stt_model_search.clone(),
+                                    index,
+                                    true,
+                                ))
+                                .child(style_model_dropdown(
+                                    &format!("style-llm-{index}"),
+                                    &llm_display,
+                                    &llm_models,
+                                    self.shared.clone(),
+                                    style.llm_model_search.clone(),
+                                    index,
+                                    false,
+                                )),
                         ),
                 )
             } else {
@@ -468,8 +537,7 @@ impl SettingsApp {
                     .label("+ Add Style")
                     .primary()
                     .on_click(cx.listener(|this, _, window, cx| {
-                        let default_prompt =
-                            this.default_prompt.read(cx).value().to_string();
+                        let default_prompt = this.default_prompt.read(cx).value().to_string();
                         let style_num = this.styles.len() + 1;
                         let entry = Style {
                             name: format!("Style {style_num}"),
@@ -478,8 +546,7 @@ impl SettingsApp {
                             stt: None,
                             llm: None,
                         };
-                        let (inputs, subs) =
-                            Self::create_style_inputs(&entry, window, cx);
+                        let (inputs, subs) = Self::create_style_inputs(&entry, window, cx);
                         this.styles.push(inputs);
                         this._subscriptions.extend(subs);
                         this.schedule_autosave(cx);
@@ -561,22 +628,23 @@ impl SettingsApp {
         let current_position = snapshot.config.overlay.position;
         let show_position = current_overlay == OverlayStyle::Classic;
         container = container.child(
-            section_block("Recording Window", cx)
-                .child(
-                    settings_card(cx)
-                        .child(
-                            setting_row("Style", "Overlay shown while recording", cx)
-                        )
-                        .child(style_cards)
-                        .when(show_position, |card| card
-                        .child(
-                            setting_row("Position", "Where the overlay appears on screen", cx),
-                        )
+            section_block("Recording Window", cx).child(
+                settings_card(cx)
+                    .child(setting_row("Style", "Overlay shown while recording", cx))
+                    .child(style_cards)
+                    .when(show_position, |card| {
+                        card.child(setting_row(
+                            "Position",
+                            "Where the overlay appears on screen",
+                            cx,
+                        ))
                         .child({
                             let mut pos_cards = div().flex().gap_3().flex_1();
                             let positions: Vec<_> = crate::config::OverlayPosition::ALL
                                 .iter()
-                                .filter(|p| **p != crate::config::OverlayPosition::Notch || has_notch)
+                                .filter(|p| {
+                                    **p != crate::config::OverlayPosition::Notch || has_notch
+                                })
                                 .copied()
                                 .collect();
                             for pos in positions {
@@ -618,8 +686,9 @@ impl SettingsApp {
                                 );
                             }
                             pos_cards
-                        })),
-                ),
+                        })
+                    }),
+            ),
         );
 
         // -- Keyboard Shortcuts --
@@ -685,15 +754,16 @@ impl SettingsApp {
                 .ghost()
         };
 
-        fn start_hotkey_poll(cx: &mut gpui::Context<SettingsApp>, field: fn(&mut SettingsApp) -> &mut bool) {
+        fn start_hotkey_poll(
+            cx: &mut gpui::Context<SettingsApp>,
+            field: fn(&mut SettingsApp) -> &mut bool,
+        ) {
             cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(50))
                         .await;
-                    let still_recording = this
-                        .update(cx, |this, _| *field(this))
-                        .unwrap_or(false);
+                    let still_recording = this.update(cx, |this, _| *field(this)).unwrap_or(false);
                     if !still_recording {
                         break;
                     }
@@ -704,179 +774,152 @@ impl SettingsApp {
         }
 
         container = container.child(
-            section_block("Keyboard Shortcuts", cx)
-                .child(
-                    settings_card(cx)
-                        .child(
-                            setting_row(
-                                "Dictation Hotkey",
-                                "Hold to record, release to transcribe",
-                                cx,
-                            )
-                            .child(
-                                div().flex().items_center().gap_1()
-                                    .child(
-                                        shortcut_button
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.shared.start_hotkey_recording();
-                                                this.recording_hotkey = true;
-                                                cx.notify();
-                                                start_hotkey_poll(cx, |s| &mut s.recording_hotkey);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("clear-hotkey")
-                                            .icon(IconName::CircleX)
-                                            .ghost()
-                                            .xsmall()
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                let _ = this.shared.update_config(|config| {
-                                                    config.hotkey.trigger = None;
-                                                });
-                                                this.schedule_autosave(cx);
-                                                cx.notify();
-                                            })),
-                                    ),
-                            ),
+            section_block("Keyboard Shortcuts", cx).child(
+                settings_card(cx)
+                    .child(
+                        setting_row(
+                            "Dictation Hotkey",
+                            "Hold to record, release to transcribe",
+                            cx,
                         )
                         .child(
-                            setting_row(
-                                "Toggle Dictation",
-                                "Press once to start, press again to stop",
-                                cx,
-                            )
-                            .child(
-                                div().flex().items_center().gap_1()
-                                    .child(
-                                        toggle_button
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.shared.start_hotkey_recording();
-                                                this.recording_toggle_hotkey = true;
-                                                cx.notify();
-                                                start_hotkey_poll(cx, |s| &mut s.recording_toggle_hotkey);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("clear-toggle-hotkey")
-                                            .icon(IconName::CircleX)
-                                            .ghost()
-                                            .xsmall()
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                let _ = this.shared.update_config(|config| {
-                                                    config.hotkey.toggle_trigger = None;
-                                                });
-                                                this.schedule_autosave(cx);
-                                                cx.notify();
-                                            })),
-                                    ),
-                            ),
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(shortcut_button.on_click(cx.listener(
+                                    |this, _, _window, cx| {
+                                        this.shared.start_hotkey_recording();
+                                        this.recording_hotkey = true;
+                                        cx.notify();
+                                        start_hotkey_poll(cx, |s| &mut s.recording_hotkey);
+                                    },
+                                )))
+                                .child(
+                                    Button::new("clear-hotkey")
+                                        .icon(IconName::CircleX)
+                                        .ghost()
+                                        .xsmall()
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            let _ = this.shared.update_config(|config| {
+                                                config.hotkey.trigger = None;
+                                            });
+                                            this.schedule_autosave(cx);
+                                            cx.notify();
+                                        })),
+                                ),
                         ),
-                ),
+                    )
+                    .child(
+                        setting_row(
+                            "Toggle Dictation",
+                            "Press once to start, press again to stop",
+                            cx,
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(toggle_button.on_click(cx.listener(
+                                    |this, _, _window, cx| {
+                                        this.shared.start_hotkey_recording();
+                                        this.recording_toggle_hotkey = true;
+                                        cx.notify();
+                                        start_hotkey_poll(cx, |s| &mut s.recording_toggle_hotkey);
+                                    },
+                                )))
+                                .child(
+                                    Button::new("clear-toggle-hotkey")
+                                        .icon(IconName::CircleX)
+                                        .ghost()
+                                        .xsmall()
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            let _ = this.shared.update_config(|config| {
+                                                config.hotkey.toggle_trigger = None;
+                                            });
+                                            this.schedule_autosave(cx);
+                                            cx.notify();
+                                        })),
+                                ),
+                        ),
+                    ),
+            ),
         );
 
         // -- Appearance --
         container = container.child(
-            section_block("Appearance", cx)
-                .child(
-                    settings_card(cx)
-                        .child(
-                            setting_row(
-                                "Appearance",
-                                "Switch between light and dark",
-                                cx,
-                            )
-                            .child({
-                                let mut pills = div().flex().gap_1().flex_shrink_0();
-                                for pref in ThemePreference::ALL {
-                                    let is_active = pref == current_theme;
-                                    pills = pills.child(
-                                        Button::new(SharedString::from(format!(
-                                            "theme-{}",
-                                            pref.label()
-                                        )))
-                                        .label(pref.label())
-                                        .small()
-                                        .compact()
-                                        .map(|btn| {
-                                            if is_active {
-                                                btn.primary()
-                                            } else {
-                                                btn.ghost()
-                                            }
-                                        })
-                                        .on_click(cx.listener(
-                                            move |this, _, window, cx| {
-                                                let accent = this.shared.snapshot().config.app.accent;
-                                                let _ =
-                                                    this.shared.update_config(|config| {
-                                                        config.app.theme = pref;
-                                                    });
-                                                apply_theme_preference(
-                                                    pref,
-                                                    accent,
-                                                    Some(window),
-                                                    cx,
-                                                );
-                                                cx.notify();
-                                            },
-                                        )),
-                                    );
-                                }
-                                pills
-                            }),
-                        )
-                        .child(
-                            div().h(gpui::px(1.0)).bg(cx.theme().border),
-                        )
-                        .child(
-                            setting_row(
-                                "Theme",
-                                "Choose your accent color",
-                                cx,
-                            )
-                            .child({
-                                let current_accent = snapshot.config.app.accent;
-                                let mut pills = div().flex().gap_1().flex_shrink_0();
-                                for accent in ColorAccent::ALL {
-                                    let is_active = accent == current_accent;
-                                    pills = pills.child(
-                                        Button::new(SharedString::from(format!(
-                                            "accent-{}",
-                                            accent.label()
-                                        )))
-                                        .label(accent.label())
-                                        .small()
-                                        .compact()
-                                        .map(|btn| {
-                                            if is_active {
-                                                btn.primary()
-                                            } else {
-                                                btn.ghost()
-                                            }
-                                        })
-                                        .on_click(cx.listener(
-                                            move |this, _, window, cx| {
-                                                let pref = this.shared.snapshot().config.app.theme;
-                                                let _ =
-                                                    this.shared.update_config(|config| {
-                                                        config.app.accent = accent;
-                                                    });
-                                                apply_theme_preference(
-                                                    pref,
-                                                    accent,
-                                                    Some(window),
-                                                    cx,
-                                                );
-                                                crate::config::set_dock_icon(accent);
-                                                cx.notify();
-                                            },
-                                        )),
-                                    );
-                                }
-                                pills
-                            }),
-                        ),
-                ),
+            section_block("Appearance", cx).child(
+                settings_card(cx)
+                    .child(
+                        setting_row("Appearance", "Switch between light and dark", cx).child({
+                            let mut pills = div().flex().gap_1().flex_shrink_0();
+                            for pref in ThemePreference::ALL {
+                                let is_active = pref == current_theme;
+                                pills = pills.child(
+                                    Button::new(SharedString::from(format!(
+                                        "theme-{}",
+                                        pref.label()
+                                    )))
+                                    .label(pref.label())
+                                    .small()
+                                    .compact()
+                                    .map(|btn| {
+                                        if is_active {
+                                            btn.primary()
+                                        } else {
+                                            btn.ghost()
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        let accent = this.shared.snapshot().config.app.accent;
+                                        let _ = this.shared.update_config(|config| {
+                                            config.app.theme = pref;
+                                        });
+                                        apply_theme_preference(pref, accent, Some(window), cx);
+                                        cx.notify();
+                                    })),
+                                );
+                            }
+                            pills
+                        }),
+                    )
+                    .child(div().h(gpui::px(1.0)).bg(cx.theme().border))
+                    .child(setting_row("Theme", "Choose your accent color", cx).child({
+                        let current_accent = snapshot.config.app.accent;
+                        let mut pills = div().flex().gap_1().flex_shrink_0();
+                        for accent in ColorAccent::ALL {
+                            let is_active = accent == current_accent;
+                            pills =
+                                pills.child(
+                                    Button::new(SharedString::from(format!(
+                                        "accent-{}",
+                                        accent.label()
+                                    )))
+                                    .label(accent.label())
+                                    .small()
+                                    .compact()
+                                    .map(|btn| {
+                                        if is_active {
+                                            btn.primary()
+                                        } else {
+                                            btn.ghost()
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        let pref = this.shared.snapshot().config.app.theme;
+                                        let _ = this.shared.update_config(|config| {
+                                            config.app.accent = accent;
+                                        });
+                                        apply_theme_preference(pref, accent, Some(window), cx);
+                                        crate::config::set_dock_icon(accent);
+                                        cx.notify();
+                                    })),
+                                );
+                        }
+                        pills
+                    })),
+            ),
         );
 
         // -- Permissions --
@@ -884,9 +927,7 @@ impl SettingsApp {
         let mut perm_card = settings_card(cx);
         for (i, perm) in perms.iter().enumerate() {
             if i > 0 {
-                perm_card = perm_card.child(
-                    div().h(gpui::px(1.0)).bg(cx.theme().border),
-                );
+                perm_card = perm_card.child(div().h(gpui::px(1.0)).bg(cx.theme().border));
             }
             let feature_icon = match perm.icon {
                 "bell" => Icon::new(IconName::Bell).size_4(),
@@ -911,9 +952,7 @@ impl SettingsApp {
                             .compact()
                             .danger()
                             .on_click(cx.listener(move |_this, _, _window, _cx| {
-                                let _ = std::process::Command::new("open")
-                                    .arg(url)
-                                    .spawn();
+                                let _ = std::process::Command::new("open").arg(url).spawn();
                             })),
                     )
                     .into_any_element()
@@ -955,9 +994,7 @@ impl SettingsApp {
             );
         }
 
-        container = container.child(
-            section_block("Permissions", cx).child(perm_card),
-        );
+        container = container.child(section_block("Permissions", cx).child(perm_card));
 
         container
     }

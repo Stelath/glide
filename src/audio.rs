@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, SampleFormat, Stream, StreamConfig,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 
 use crate::app::LiveAudioData;
@@ -73,7 +73,9 @@ impl AudioRecorder {
         let stream = match supported.sample_format() {
             SampleFormat::I16 => device.build_input_stream(
                 &stream_config,
-                move |data: &[i16], _| push_i16_frames(data, channels, &capture_target, &live_target),
+                move |data: &[i16], _| {
+                    push_i16_frames(data, channels, &capture_target, &live_target)
+                },
                 error_callback,
                 None,
             )?,
@@ -81,7 +83,9 @@ impl AudioRecorder {
                 let live_target = live_audio.clone();
                 device.build_input_stream(
                     &stream_config,
-                    move |data: &[u16], _| push_u16_frames(data, channels, &capture_target, &live_target),
+                    move |data: &[u16], _| {
+                        push_u16_frames(data, channels, &capture_target, &live_target)
+                    },
                     error_callback,
                     None,
                 )?
@@ -90,7 +94,9 @@ impl AudioRecorder {
                 let live_target = live_audio.clone();
                 device.build_input_stream(
                     &stream_config,
-                    move |data: &[f32], _| push_f32_frames(data, channels, &capture_target, &live_target),
+                    move |data: &[f32], _| {
+                        push_f32_frames(data, channels, &capture_target, &live_target)
+                    },
                     error_callback,
                     None,
                 )?

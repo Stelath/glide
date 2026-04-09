@@ -71,6 +71,9 @@ struct AboutView;
 
 impl Render for AboutView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let accent = cx.global::<SettingsWindowState>().shared.config().app.accent;
+        let icon_path = crate::config::accent_icon_path(accent)
+            .unwrap_or_else(|| crate::config::asset_path("assets/icons/logo.svg"));
         div()
             .flex()
             .flex_col()
@@ -80,7 +83,7 @@ impl Render for AboutView {
             .bg(cx.theme().background)
             .gap(px(12.0))
             .child(
-                img(crate::config::asset_path("assets/icons/logo.svg"))
+                img(icon_path)
                     .w(px(80.0))
                     .h(px(80.0)),
             )

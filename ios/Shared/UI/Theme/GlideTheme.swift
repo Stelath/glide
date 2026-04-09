@@ -126,9 +126,9 @@ enum GlideAccent: String, CaseIterable, Codable, Identifiable, Sendable {
     static var current: GlideAccent {
         guard let defaults = UserDefaults(suiteName: "group.com.stelath.glide.app"),
               let raw = defaults.string(forKey: "accent") else {
-            return .purple
+            return .slate
         }
-        return GlideAccent(rawValue: raw) ?? .purple
+        return GlideAccent(rawValue: raw) ?? .slate
     }
 }
 

@@ -81,6 +81,30 @@ pub fn app_icon_path(app_name: &str) -> Option<PathBuf> {
     }
 }
 
+pub fn accent_icon_path(accent: super::ColorAccent) -> Option<PathBuf> {
+    let source_path = super::asset_path(accent.icns_asset());
+    let png_path = icon_cache_dir().join(format!(
+        "glide-app-icon-{}.png",
+        accent.label().to_lowercase()
+    ));
+    let needs_refresh = match (fs::metadata(&source_path), fs::metadata(&png_path)) {
+        (Ok(source), Ok(cached)) => match (source.modified(), cached.modified()) {
+            (Ok(source_time), Ok(cached_time)) => source_time > cached_time,
+            _ => true,
+        },
+        (Ok(_), Err(_)) => true,
+        _ => false,
+    };
+    if (!png_path.exists() || needs_refresh) && extract_icon_file_to_png(&source_path, &png_path).is_err() {
+        return None;
+    }
+    if png_path.exists() {
+        Some(png_path)
+    } else {
+        None
+    }
+}
+
 pub fn preload_app_icons() {
     std::thread::spawn(|| {
         let apps = list_applications();
@@ -98,8 +122,6 @@ pub fn preload_app_icons() {
 
 fn extract_icon_to_png(app_name: &str, dest: &Path) -> Result<()> {
     let msg1: MsgSendPtr = unsafe { std::mem::transmute(objc_msgSend as *const ()) };
-    let msg_usize: MsgSendUsize = unsafe { std::mem::transmute(objc_msgSend as *const ()) };
-    let msg_len: MsgSendLen = unsafe { std::mem::transmute(objc_msgSend as *const ()) };
 
     unsafe {
         let workspace_class = objc_getClass(b"NSWorkspace\0".as_ptr());
@@ -128,7 +150,66 @@ fn extract_icon_to_png(app_name: &str, dest: &Path) -> Result<()> {
             anyhow::bail!("failed to get icon");
         }
 
-        let tiff_data = objc_msgSend(icon, sel_registerName(b"TIFFRepresentation\0".as_ptr()));
+        write_nsimage_png(icon, dest)
+    }
+}
+
+fn extract_icon_file_to_png(source: &Path, dest: &Path) -> Result<()> {
+    let source = source
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-utf8 icon path: {}", source.display()))?;
+
+    let image = nsimage_from_path(source)?;
+    write_nsimage_png(image, dest)
+}
+
+fn nsimage_from_path(path: &str) -> Result<*mut c_void> {
+    unsafe {
+        let msg_ptr: MsgSendPtr = std::mem::transmute(objc_msgSend as *const ());
+
+        let ns_string_class = objc_getClass(b"NSString\0".as_ptr());
+        if ns_string_class.is_null() {
+            anyhow::bail!("NSString class not found");
+        }
+        let alloc = objc_msgSend(ns_string_class, sel_registerName(b"alloc\0".as_ptr()));
+        type MsgSendInitString = unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize, usize) -> *mut c_void;
+        let msg_init_str: MsgSendInitString = std::mem::transmute(objc_msgSend as *const ());
+        let ns_path = msg_init_str(
+            alloc,
+            sel_registerName(b"initWithBytes:length:encoding:\0".as_ptr()),
+            path.as_bytes().as_ptr(),
+            path.len(),
+            4, // NSUTF8StringEncoding
+        );
+        if ns_path.is_null() {
+            anyhow::bail!("failed to create NSString path");
+        }
+
+        let ns_image_class = objc_getClass(b"NSImage\0".as_ptr());
+        if ns_image_class.is_null() {
+            anyhow::bail!("NSImage class not found");
+        }
+        let image_alloc = objc_msgSend(ns_image_class, sel_registerName(b"alloc\0".as_ptr()));
+        let image = msg_ptr(
+            image_alloc,
+            sel_registerName(b"initWithContentsOfFile:\0".as_ptr()),
+            ns_path,
+        );
+        if image.is_null() {
+            anyhow::bail!("failed to load icon image");
+        }
+
+        Ok(image)
+    }
+}
+
+fn write_nsimage_png(image: *mut c_void, dest: &Path) -> Result<()> {
+    unsafe {
+        let msg1: MsgSendPtr = std::mem::transmute(objc_msgSend as *const ());
+        let msg_usize: MsgSendUsize = std::mem::transmute(objc_msgSend as *const ());
+        let msg_len: MsgSendLen = std::mem::transmute(objc_msgSend as *const ());
+
+        let tiff_data = objc_msgSend(image, sel_registerName(b"TIFFRepresentation\0".as_ptr()));
         if tiff_data.is_null() {
             anyhow::bail!("failed to get TIFF data");
         }
@@ -156,7 +237,6 @@ fn extract_icon_to_png(app_name: &str, dest: &Path) -> Result<()> {
 
         let bytes_ptr = objc_msgSend(png_data, sel_registerName(b"bytes\0".as_ptr())) as *const u8;
         let length = msg_len(png_data, sel_registerName(b"length\0".as_ptr()));
-
         if bytes_ptr.is_null() || length == 0 {
             anyhow::bail!("empty PNG data");
         }
@@ -314,40 +394,36 @@ pub fn set_dock_icon(accent: super::ColorAccent) {
 
     unsafe {
         let msg_ptr: MsgSendPtr = std::mem::transmute(objc_msgSend as *const ());
-
-        // NSString from path
         let path_str = path.to_string_lossy();
-        let path_bytes = path_str.as_bytes();
-        let ns_string_class = objc_getClass(b"NSString\0".as_ptr());
-        let alloc = objc_msgSend(ns_string_class, sel_registerName(b"alloc\0".as_ptr()));
-        type MsgSendInitString = unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize, usize) -> *mut c_void;
-        let msg_init_str: MsgSendInitString = std::mem::transmute(objc_msgSend as *const ());
-        let ns_path = msg_init_str(
-            alloc,
-            sel_registerName(b"initWithBytes:length:encoding:\0".as_ptr()),
-            path_bytes.as_ptr(),
-            path_bytes.len(),
-            4, // NSUTF8StringEncoding
-        );
-        if ns_path.is_null() { return; }
-
-        // NSImage from path
-        let ns_image_class = objc_getClass(b"NSImage\0".as_ptr());
-        let image_alloc = objc_msgSend(ns_image_class, sel_registerName(b"alloc\0".as_ptr()));
-        let image = msg_ptr(
-            image_alloc,
-            sel_registerName(b"initWithContentsOfFile:\0".as_ptr()),
-            ns_path,
-        );
-        if image.is_null() { return; }
+        let image = match nsimage_from_path(&path_str) {
+            Ok(image) => image,
+            Err(err) => {
+                eprintln!("[glide] failed to load dock icon {}: {err}", path.display());
+                return;
+            }
+        };
 
         // NSApplication.shared.setApplicationIconImage:
         let ns_app_class = objc_getClass(b"NSApplication\0".as_ptr());
+        if ns_app_class.is_null() {
+            eprintln!("[glide] NSApplication class not found");
+            return;
+        }
         let shared_app = objc_msgSend(ns_app_class, sel_registerName(b"sharedApplication\0".as_ptr()));
+        if shared_app.is_null() {
+            eprintln!("[glide] failed to get NSApplication.shared");
+            return;
+        }
         msg_ptr(
             shared_app,
             sel_registerName(b"setApplicationIconImage:\0".as_ptr()),
             image,
         );
+
+        // Force the Dock to refresh its cached icon tile
+        let dock_tile = objc_msgSend(shared_app, sel_registerName(b"dockTile\0".as_ptr()));
+        if !dock_tile.is_null() {
+            objc_msgSend(dock_tile, sel_registerName(b"display\0".as_ptr()));
+        }
     }
 }

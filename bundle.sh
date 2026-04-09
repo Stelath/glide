@@ -31,7 +31,8 @@ cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 # Icon
 cp "$ROOT/assets/icons/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
-# Assets (logos, provider icons)
+# Assets (logos, provider icons, accent icons)
+cp "$ROOT/assets/icons/"*.icns "$APP/Contents/Resources/assets/icons/" 2>/dev/null || true
 cp "$ROOT/assets/icons/"*.png "$APP/Contents/Resources/assets/icons/" 2>/dev/null || true
 cp "$ROOT/assets/icons/"*.svg "$APP/Contents/Resources/assets/icons/" 2>/dev/null || true
 

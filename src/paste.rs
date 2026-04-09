@@ -35,15 +35,13 @@ unsafe extern "C" {
 fn simulate_paste() {
     unsafe {
         // Key down: Cmd+V
-        let key_down =
-            CGEventCreateKeyboardEvent(std::ptr::null_mut(), KVK_V, true);
+        let key_down = CGEventCreateKeyboardEvent(std::ptr::null_mut(), KVK_V, true);
         CGEventSetFlags(key_down, K_CG_EVENT_FLAG_MASK_COMMAND);
         CGEventPost(K_CG_HID_EVENT_TAP, key_down);
         CFRelease(key_down);
 
         // Key up: release V
-        let key_up =
-            CGEventCreateKeyboardEvent(std::ptr::null_mut(), KVK_V, false);
+        let key_up = CGEventCreateKeyboardEvent(std::ptr::null_mut(), KVK_V, false);
         CGEventSetFlags(key_up, K_CG_EVENT_FLAG_MASK_COMMAND);
         CGEventPost(K_CG_HID_EVENT_TAP, key_up);
         CFRelease(key_up);

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -156,7 +156,11 @@ impl SharedAppState {
             input_devices: state.input_devices.clone(),
             permission_hint: state.permission_hint.clone(),
             overlay_phase: self.overlay_phase(),
-            frontmost_app: self.frontmost_app.lock().expect("frontmost_app poisoned").clone(),
+            frontmost_app: self
+                .frontmost_app
+                .lock()
+                .expect("frontmost_app poisoned")
+                .clone(),
         }
     }
 
@@ -231,7 +235,10 @@ impl SharedAppState {
     }
 
     pub fn frontmost_app(&self) -> Option<String> {
-        self.frontmost_app.lock().expect("frontmost_app poisoned").clone()
+        self.frontmost_app
+            .lock()
+            .expect("frontmost_app poisoned")
+            .clone()
     }
 
     pub fn set_live_audio(&self, data: Option<Arc<Mutex<LiveAudioData>>>) {

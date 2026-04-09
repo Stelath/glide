@@ -15,7 +15,12 @@ pub struct OpenAiLlmProvider {
 }
 
 impl OpenAiLlmProvider {
-    pub fn new(provider: Provider, model: &str, system_prompt: &str, providers: &ProvidersConfig) -> Result<Self> {
+    pub fn new(
+        provider: Provider,
+        model: &str,
+        system_prompt: &str,
+        providers: &ProvidersConfig,
+    ) -> Result<Self> {
         let creds = providers.credentials_for(provider);
         let api_key = creds.resolve_api_key("LLM")?;
         let endpoint = provider.llm_endpoint(&creds.base_url);

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use reqwest::{multipart, Client};
+use reqwest::{Client, multipart};
 use serde::Deserialize;
 
 use crate::{

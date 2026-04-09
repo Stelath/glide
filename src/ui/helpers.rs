@@ -1,11 +1,11 @@
 use gpui::prelude::*;
-use gpui::{div, img, App, Entity, SharedString};
+use gpui::{App, Entity, SharedString, div, img};
+use gpui_component::ActiveTheme;
+use gpui_component::Sizable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::popover::Popover;
 use gpui_component::{Icon, IconName};
-use gpui_component::ActiveTheme;
-use gpui_component::Sizable;
 
 use crate::app::SharedState;
 use crate::config::{GlideConfig, ModelSelection, OverlayPosition, Provider};
@@ -32,16 +32,12 @@ pub(super) fn settings_card(cx: &App) -> gpui::Div {
 }
 
 pub(super) fn section_block(heading: &str, cx: &App) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(heading.to_string()),
-        )
+    div().flex().flex_col().gap_2().child(
+        div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(heading.to_string()),
+    )
 }
 
 pub(super) fn setting_row(label: &str, description: &str, cx: &App) -> gpui::Div {
@@ -178,7 +174,12 @@ pub(super) fn model_picker_item(
         .rounded_md()
         .cursor_pointer()
         .hover(|s| s.bg(cx.theme().accent.opacity(0.15)))
-        .child(img(logo_path).w(gpui::px(16.0)).h(gpui::px(16.0)).rounded_sm())
+        .child(
+            img(logo_path)
+                .w(gpui::px(16.0))
+                .h(gpui::px(16.0))
+                .rounded_sm(),
+        )
         .child(
             div()
                 .flex_1()
@@ -251,21 +252,20 @@ pub(super) fn model_dropdown_button(
                 let model_provider_str = model.provider.clone();
                 let shared = shared.clone();
                 let popover = popover.clone();
-                list = list.child(
-                    model_picker_item(model, is_recommended, cx).on_click(
-                        move |_, window, cx| {
-                            let id = model_id.clone();
-                            let provider = crate::config::Provider::from_model_info_provider(&model_provider_str)
+                list = list.child(model_picker_item(model, is_recommended, cx).on_click(
+                    move |_, window, cx| {
+                        let id = model_id.clone();
+                        let provider =
+                            crate::config::Provider::from_model_info_provider(&model_provider_str)
                                 .unwrap_or(crate::config::Provider::OpenAi);
-                            let _ = shared.update_config(|config| {
-                                updater(config, id, provider);
-                            });
-                            popover.update(cx, |state, cx| {
-                                state.dismiss(window, cx);
-                            });
-                        },
-                    ),
-                );
+                        let _ = shared.update_config(|config| {
+                            updater(config, id, provider);
+                        });
+                        popover.update(cx, |state, cx| {
+                            state.dismiss(window, cx);
+                        });
+                    },
+                ));
             }
 
             div()
@@ -290,7 +290,12 @@ pub(super) fn model_dropdown_button(
                 )
         });
 
-    let mut wrapper = div().flex().items_center().gap_1().min_w_0().overflow_hidden();
+    let mut wrapper = div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .min_w_0()
+        .overflow_hidden();
     if let Some(ref logo) = current_logo {
         wrapper = wrapper.child(
             img(crate::config::asset_path(logo))
@@ -394,30 +399,33 @@ pub(super) fn style_model_dropdown(
                 let model_provider_str_style = model.provider.clone();
                 let shared = shared.clone();
                 let popover = popover.clone();
-                list = list.child(
-                    model_picker_item(model, false, cx).on_click(
-                        move |_, window, cx| {
-                            let id = model_id.clone();
-                            let model_provider = model_provider_str_style.clone();
-                            let _ = shared.update_config(|config| {
-                                let provider = crate::config::Provider::from_model_info_provider(&model_provider)
+                list = list.child(model_picker_item(model, false, cx).on_click(
+                    move |_, window, cx| {
+                        let id = model_id.clone();
+                        let model_provider = model_provider_str_style.clone();
+                        let _ = shared.update_config(|config| {
+                            let provider =
+                                crate::config::Provider::from_model_info_provider(&model_provider)
                                     .unwrap_or(crate::config::Provider::OpenAi);
-                                if let Some(style) =
-                                    config.dictation.styles.get_mut(style_index)
-                                {
-                                    if is_stt {
-                                        style.stt = Some(ModelSelection { provider, model: id });
-                                    } else {
-                                        style.llm = Some(ModelSelection { provider, model: id });
-                                    }
+                            if let Some(style) = config.dictation.styles.get_mut(style_index) {
+                                if is_stt {
+                                    style.stt = Some(ModelSelection {
+                                        provider,
+                                        model: id,
+                                    });
+                                } else {
+                                    style.llm = Some(ModelSelection {
+                                        provider,
+                                        model: id,
+                                    });
                                 }
-                            });
-                            popover.update(cx, |state, cx| {
-                                state.dismiss(window, cx);
-                            });
-                        },
-                    ),
-                );
+                            }
+                        });
+                        popover.update(cx, |state, cx| {
+                            state.dismiss(window, cx);
+                        });
+                    },
+                ));
             }
 
             div()
@@ -442,7 +450,12 @@ pub(super) fn style_model_dropdown(
                 )
         });
 
-    let mut wrapper = div().flex().items_center().gap_1().min_w_0().overflow_hidden();
+    let mut wrapper = div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .min_w_0()
+        .overflow_hidden();
     if let Some(ref logo) = current_logo {
         wrapper = wrapper.child(
             img(crate::config::asset_path(logo))

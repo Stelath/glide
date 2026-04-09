@@ -27,8 +27,7 @@ use crate::{
     app::{RuntimeStatus, SharedState},
     audio::RecordedAudio,
     llm::{self, CleanupContext},
-    paste,
-    stt,
+    paste, stt,
 };
 
 pub async fn process_recording(
@@ -44,9 +43,11 @@ pub async fn process_recording(
 
     // Match style by target app
     let matched_style = target_app.as_ref().and_then(|target| {
-        config.dictation.styles.iter().find(|s| {
-            s.apps.iter().any(|a| a.eq_ignore_ascii_case(target))
-        })
+        config
+            .dictation
+            .styles
+            .iter()
+            .find(|s| s.apps.iter().any(|a| a.eq_ignore_ascii_case(target)))
     });
 
     // Resolve effective STT settings
@@ -54,7 +55,10 @@ pub async fn process_recording(
         .and_then(|s| s.stt.as_ref())
         .unwrap_or(&config.dictation.stt);
 
-    eprintln!("[glide] STT: transcribing {} samples via {:?} / {}...", audio.sample_count, stt_sel.provider, stt_sel.model);
+    eprintln!(
+        "[glide] STT: transcribing {} samples via {:?} / {}...",
+        audio.sample_count, stt_sel.provider, stt_sel.model
+    );
     let stt_provider = stt::build_provider(stt_sel.provider, &stt_sel.model, &config.providers)
         .context("failed to build STT provider")?;
     let raw_text = stt_provider
@@ -62,7 +66,10 @@ pub async fn process_recording(
         .await
         .with_context(|| format!("{} transcription failed", stt_provider.name()))?;
 
-    anyhow::ensure!(!raw_text.trim().is_empty(), "transcription returned no text");
+    anyhow::ensure!(
+        !raw_text.trim().is_empty(),
+        "transcription returned no text"
+    );
     eprintln!("[glide] STT: got transcript ({} chars)", raw_text.len());
 
     // Resolve effective LLM settings
@@ -74,9 +81,13 @@ pub async fn process_recording(
         .unwrap_or(&config.dictation.system_prompt);
 
     let cleaned_text = if let Some(llm) = llm_sel {
-        eprintln!("[glide] LLM: cleaning up via {:?} / {}...", llm.provider, llm.model);
-        let llm_provider = llm::build_provider(llm.provider, &llm.model, system_prompt, &config.providers)
-            .with_context(|| format!("failed to build LLM provider"))?;
+        eprintln!(
+            "[glide] LLM: cleaning up via {:?} / {}...",
+            llm.provider, llm.model
+        );
+        let llm_provider =
+            llm::build_provider(llm.provider, &llm.model, system_prompt, &config.providers)
+                .with_context(|| format!("failed to build LLM provider"))?;
         llm_provider
             .clean(
                 &raw_text,

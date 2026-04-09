@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use crate::{audio::AudioFormat, config::{Provider, ProvidersConfig}};
+use crate::{
+    audio::AudioFormat,
+    config::{Provider, ProvidersConfig},
+};
 
 mod openai;
 
@@ -17,8 +20,8 @@ pub fn build_provider(
 ) -> Result<Box<dyn SttProvider>> {
     match provider {
         // Both OpenAI and Groq use the OpenAI-compatible API format
-        Provider::OpenAi | Provider::Groq => {
-            Ok(Box::new(openai::OpenAiSttProvider::new(provider, model, providers)?))
-        }
+        Provider::OpenAi | Provider::Groq => Ok(Box::new(openai::OpenAiSttProvider::new(
+            provider, model, providers,
+        )?)),
     }
 }

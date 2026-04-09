@@ -3,8 +3,8 @@ pub mod models;
 pub mod providers;
 
 pub use macos::{
-    app_icon_path, frontmost_app_name, fuzzy_match, list_applications, main_display_size,
-    notch_dimensions, notch_width, preload_app_icons, set_dock_icon,
+    accent_icon_path, app_icon_path, frontmost_app_name, fuzzy_match, list_applications,
+    main_display_size, notch_dimensions, notch_width, preload_app_icons, set_dock_icon,
 };
 pub use models::{
     any_provider_verified, apply_smart_defaults_initial, cached_llm_models,
@@ -114,7 +114,7 @@ impl Default for AppConfig {
             launch_at_login: false,
             menu_bar_icon: MenuBarIcon::Default,
             theme: ThemePreference::System,
-            accent: ColorAccent::Purple,
+            accent: ColorAccent::Slate,
         }
     }
 }
@@ -230,12 +230,13 @@ impl ColorAccent {
     }
 
     /// RGB values for the notch glow overlay effect.
-    pub fn glow_rgb(self) -> (f64, f64, f64) {
+    /// Returns `None` for Slate (rainbow hue-cycling glow).
+    pub fn glow_rgb(self) -> Option<(f64, f64, f64)> {
         match self {
-            Self::Purple => (0.49, 0.42, 0.77),
-            Self::Blue => (0.29, 0.56, 0.83),
-            Self::Orange => (0.94, 0.38, 0.23),
-            Self::Slate => (0.42, 0.45, 0.50),
+            Self::Purple => Some((0.49, 0.42, 0.77)),
+            Self::Blue => Some((0.29, 0.56, 0.83)),
+            Self::Orange => Some((0.94, 0.38, 0.23)),
+            Self::Slate => None,
         }
     }
 }

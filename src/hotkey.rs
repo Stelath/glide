@@ -149,8 +149,7 @@ pub fn start_listener(shared: SharedState, runtime: Arc<Runtime>) {
                 return;
             }
 
-            let source =
-                ffi::CFMachPortCreateRunLoopSource(ffi::kCFAllocatorDefault, tap, 0);
+            let source = ffi::CFMachPortCreateRunLoopSource(ffi::kCFAllocatorDefault, tap, 0);
             let run_loop = ffi::CFRunLoopGetCurrent();
             ffi::CFRunLoopAddSource(run_loop, source, ffi::kCFRunLoopCommonModes_real);
 
@@ -171,11 +170,17 @@ unsafe extern "C" fn event_tap_callback(
     user_info: *mut std::ffi::c_void,
 ) -> ffi::CGEventRef {
     let ctx = unsafe { &mut *(user_info as *mut TapContext) };
-    let keycode = unsafe { ffi::CGEventGetIntegerValueField(event, ffi::kCGKeyboardEventKeycode) } as u16;
+    let keycode =
+        unsafe { ffi::CGEventGetIntegerValueField(event, ffi::kCGKeyboardEventKeycode) } as u16;
 
     // If the UI is recording a new hotkey, capture this keycode and skip normal handling.
-    if ctx.shared.hotkey_recording.load(std::sync::atomic::Ordering::SeqCst) {
-        let is_key_event = event_type == ffi::kCGEventKeyDown || event_type == ffi::kCGEventFlagsChanged;
+    if ctx
+        .shared
+        .hotkey_recording
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        let is_key_event =
+            event_type == ffi::kCGEventKeyDown || event_type == ffi::kCGEventFlagsChanged;
         if is_key_event {
             // For modifier keys via flagsChanged, only record on press (not release)
             if event_type == ffi::kCGEventFlagsChanged {
@@ -295,14 +300,12 @@ fn handle_release(ctx: &mut TapContext) {
             ctx.runtime.spawn(async move {
                 match pipeline::process_recording(shared_clone.clone(), audio, target_app).await {
                     Ok(()) => {
-                        shared_clone
-                            .set_overlay_phase(crate::app::OverlayPhase::Dismissed);
+                        shared_clone.set_overlay_phase(crate::app::OverlayPhase::Dismissed);
                     }
                     Err(error) => {
                         eprintln!("pipeline error: {error:#}");
                         shared_clone.set_error(error.to_string());
-                        shared_clone
-                            .set_overlay_phase(crate::app::OverlayPhase::Dismissed);
+                        shared_clone.set_overlay_phase(crate::app::OverlayPhase::Dismissed);
                     }
                 }
             });
@@ -344,13 +347,22 @@ mod tests {
 
     #[test]
     fn test_option_maps_to_alt_keycodes() {
-        assert!(is_trigger_keycode(HotkeyTrigger::Option, keycode::OPTION_LEFT));
-        assert!(is_trigger_keycode(HotkeyTrigger::Option, keycode::OPTION_RIGHT));
+        assert!(is_trigger_keycode(
+            HotkeyTrigger::Option,
+            keycode::OPTION_LEFT
+        ));
+        assert!(is_trigger_keycode(
+            HotkeyTrigger::Option,
+            keycode::OPTION_RIGHT
+        ));
     }
 
     #[test]
     fn test_command_right_maps() {
-        assert!(is_trigger_keycode(HotkeyTrigger::CommandRight, keycode::COMMAND_RIGHT));
+        assert!(is_trigger_keycode(
+            HotkeyTrigger::CommandRight,
+            keycode::COMMAND_RIGHT
+        ));
     }
 
     #[test]
@@ -371,8 +383,14 @@ mod tests {
     #[test]
     fn test_wrong_key_returns_false() {
         assert!(!is_trigger_keycode(HotkeyTrigger::F8, keycode::F9));
-        assert!(!is_trigger_keycode(HotkeyTrigger::Option, keycode::COMMAND_RIGHT));
-        assert!(!is_trigger_keycode(HotkeyTrigger::CommandRight, keycode::OPTION_LEFT));
+        assert!(!is_trigger_keycode(
+            HotkeyTrigger::Option,
+            keycode::COMMAND_RIGHT
+        ));
+        assert!(!is_trigger_keycode(
+            HotkeyTrigger::CommandRight,
+            keycode::OPTION_LEFT
+        ));
     }
 
     #[test]
