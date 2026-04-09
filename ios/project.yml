@@ -40,7 +40,7 @@ targets:
       INFOPLIST_FILE: GlideApp/Info.plist
       CODE_SIGN_ENTITLEMENTS: GlideApp/GlideApp.entitlements
       ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
-      ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-Blue AppIcon-Orange AppIcon-Slate"
+      ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-Blue AppIcon-Orange AppIcon-Purple"
     dependencies:
       - sdk: AppIntents.framework
       - target: GlideKeyboard

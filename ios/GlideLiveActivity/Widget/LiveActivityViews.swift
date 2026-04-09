@@ -25,7 +25,7 @@ struct LockScreenLiveActivityView: View {
                 HStack(spacing: 6) {
                     if context.state.phase == "recording" {
                         Circle()
-                            .fill(.red)
+                            .fill(GlideAccent.current.primary)
                             .frame(width: 6, height: 6)
                     }
 
@@ -46,7 +46,7 @@ struct LockScreenLiveActivityView: View {
             .buttonStyle(.plain)
         }
         .padding(16)
-        .activityBackgroundTint(Color.glideSurface)
+        .activityBackgroundTint(GlideAccent.current.accentSurface)
     }
 
     private var statusText: String {
@@ -66,13 +66,6 @@ struct LockScreenLiveActivityView: View {
     }
 
     private var phaseTint: Color {
-        switch context.state.phase {
-        case "recording":
-            return .red
-        case "processing":
-            return GlideAccent.current.primary
-        default:
-            return GlideAccent.current.primary
-        }
+        GlideAccent.current.primary
     }
 }

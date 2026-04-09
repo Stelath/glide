@@ -648,7 +648,7 @@ private struct LiveSessionWaveform: View {
     private func barColor(for index: Int) -> Color {
         let normalized = Double(index) / Double(barCount - 1)
         let intensity = sin(normalized * .pi)
-        return Color.red.opacity(0.45 + 0.55 * intensity)
+        return GlideAccent.current.primary.opacity(0.45 + 0.55 * intensity)
     }
 }
 

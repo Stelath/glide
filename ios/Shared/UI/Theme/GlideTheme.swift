@@ -115,10 +115,10 @@ enum GlideAccent: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var iconName: String? {
         switch self {
-        case .purple: return nil
+        case .slate: return nil
         case .blue: return "AppIcon-Blue"
         case .orange: return "AppIcon-Orange"
-        case .slate: return "AppIcon-Slate"
+        case .purple: return "AppIcon-Purple"
         }
     }
 

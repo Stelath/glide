@@ -19,7 +19,7 @@ struct GlideLiveActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.leading) {
                     Image(systemName: "mic.fill")
                         .font(.title2)
-                        .foregroundStyle(context.state.phase == "recording" ? .red : GlideAccent.current.primary)
+                        .foregroundStyle(GlideAccent.current.primary)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 2) {
@@ -49,7 +49,7 @@ struct GlideLiveActivityWidget: Widget {
                 }
             } compactLeading: {
                 Image(systemName: "mic.fill")
-                    .foregroundStyle(context.state.phase == "recording" ? .red : GlideAccent.current.primary)
+                    .foregroundStyle(GlideAccent.current.primary)
             } compactTrailing: {
                 if context.state.phase != "ready" {
                     Text(phaseLabel(context.state.phase))
@@ -58,7 +58,7 @@ struct GlideLiveActivityWidget: Widget {
                 }
             } minimal: {
                 Image(systemName: "mic.fill")
-                    .foregroundStyle(context.state.phase == "recording" ? .red : GlideAccent.current.primary)
+                    .foregroundStyle(GlideAccent.current.primary)
             }
         }
     }

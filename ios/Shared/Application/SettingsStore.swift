@@ -131,7 +131,7 @@ final class SettingsStore {
         llmModel = store.string(forKey: "llm_model") ?? ""
         systemPrompt = store.string(forKey: "system_prompt") ?? Self.defaultSystemPrompt
         styles = readStyles()
-        accent = GlideAccent(rawValue: store.string(forKey: "accent") ?? "") ?? .purple
+        accent = GlideAccent(rawValue: store.string(forKey: "accent") ?? "") ?? .slate
         hasCompletedOnboarding = store.bool(forKey: "has_completed_onboarding")
         isReloading = false
     }
