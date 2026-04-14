@@ -1,3 +1,4 @@
+mod account_ui;
 mod helpers;
 pub(crate) mod onboarding;
 mod panes;
@@ -48,6 +49,7 @@ enum SettingsPane {
     Providers,
     Styles,
     General,
+    Account,
 }
 
 struct ProviderInputs {
@@ -92,6 +94,11 @@ pub struct SettingsApp {
     onboarding_perm_state: onboarding::PermissionState,
     onboarding_selected_trigger: Option<crate::config::HotkeyTrigger>,
     onboarding_recording_custom: bool,
+
+    // Welcome overlay (shown at first launch before onboarding)
+    show_welcome: bool,
+    account_sign_in_pending: bool,
+    account_error: Option<String>,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -173,6 +180,7 @@ impl SettingsApp {
         })
         .detach();
 
+        let show_welcome = !config.account.has_seen_welcome;
         let show_onboarding = !config.app.onboarding_completed;
 
         // Start permission polling if onboarding is active
@@ -233,6 +241,9 @@ impl SettingsApp {
             onboarding_perm_state: onboarding::PermissionState::check(),
             onboarding_selected_trigger: Some(onboarding::default_hotkey_preset()),
             onboarding_recording_custom: false,
+            show_welcome,
+            account_sign_in_pending: false,
+            account_error: None,
             _subscriptions: subs,
         }
     }
@@ -381,6 +392,15 @@ impl SettingsApp {
                             this.active_pane = SettingsPane::Providers;
                             cx.notify();
                         })),
+                )
+                .child(
+                    SidebarMenuItem::new("Account")
+                        .icon(Icon::new(IconName::User))
+                        .active(self.active_pane == SettingsPane::Account)
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.active_pane = SettingsPane::Account;
+                            cx.notify();
+                        })),
                 ),
         )
     }
@@ -408,6 +428,9 @@ impl SettingsApp {
                 SettingsPane::General => self
                     .render_general_pane(window, cx, &snapshot)
                     .into_any_element(),
+                SettingsPane::Account => {
+                    self.render_account_pane(window, cx).into_any_element()
+                }
             })
     }
 }
@@ -418,6 +441,9 @@ impl Render for SettingsApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        if self.show_welcome {
+            return self.render_welcome_overlay(window, cx).into_any_element();
+        }
         if self.show_onboarding {
             return self.render_onboarding_overlay(window, cx).into_any_element();
         }

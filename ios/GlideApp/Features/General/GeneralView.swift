@@ -4,9 +4,11 @@ import UIKit
 
 struct GeneralView: View {
     @Environment(SettingsStore.self) private var settings
+    @Environment(AccountStore.self) private var accountStore
     @Environment(\.openURL) private var openURL
 
     @State private var micPermission = AVAudioApplication.shared.recordPermission
+    @State private var showingAccountSheet = false
 
     var body: some View {
         NavigationStack {
@@ -22,6 +24,34 @@ struct GeneralView: View {
                 Divider()
 
                 Form {
+                Section("Account") {
+                    Button {
+                        showingAccountSheet = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            accountAvatar
+                                .frame(width: 36, height: 36)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(accountPrimaryLabel)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(Color.glideText)
+                                Text(accountSecondaryLabel)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Section("Appearance") {
                     HStack(spacing: 16) {
                         Spacer()
@@ -95,6 +125,46 @@ struct GeneralView: View {
         .onAppear {
             micPermission = AVAudioApplication.shared.recordPermission
         }
+        .sheet(isPresented: $showingAccountSheet) {
+            AccountView()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private var accountAvatar: some View {
+        if let account = accountStore.currentAccount {
+            if let url = account.avatarURL {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    AccountAvatarView(initials: account.initials, accent: settings.accent.primary, size: 36)
+                }
+                .clipShape(Circle())
+            } else {
+                AccountAvatarView(initials: account.initials, accent: settings.accent.primary, size: 36)
+            }
+        } else {
+            ZStack {
+                Circle().fill(Color.glideSurface)
+                Image(systemName: "person.crop.circle")
+                    .font(.title2)
+                    .foregroundStyle(Color.glideText.opacity(0.5))
+            }
+        }
+    }
+
+    private var accountPrimaryLabel: String {
+        accountStore.currentAccount?.shortDisplayName ?? "Sign In"
+    }
+
+    private var accountSecondaryLabel: String {
+        if let account = accountStore.currentAccount {
+            if let email = account.email, account.displayName != nil { return email }
+            return "Signed in with \(account.provider.displayName)"
+        }
+        return "Guest — unlock a plan (coming soon)"
     }
 
     private var microphoneStatusText: String {

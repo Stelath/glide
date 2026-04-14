@@ -1,4 +1,4 @@
-import ActivityKit
+@preconcurrency import ActivityKit
 import AVFoundation
 import Observation
 import UIKit
@@ -378,22 +378,38 @@ final class LiveDictationManager {
 
     private func makeProcessingConfig(for snapshot: LiveDictationSnapshot) throws -> LiveDictationProcessingConfig {
         let settings = SettingsStore.shared
+        let routing = AccountRouter.shared.currentRouting()
         let selectedStyle = settings.styles.first(where: { $0.id == snapshot.selectedStyleID })
 
         let sttProvider = selectedStyle?.sttProvider ?? settings.sttProvider
         let sttModel = selectedStyle?.sttModel ?? settings.sttModel
-        let sttKey = settings.apiKey(for: sttProvider)
-        let sttBaseURL = settings.baseURL(for: sttProvider)
+        let llmProvider = selectedStyle?.llmProvider ?? settings.llmProvider
+        let llmModel = selectedStyle?.llmModel ?? settings.llmModel
+        let systemPrompt = selectedStyle?.prompt ?? settings.systemPrompt
+
+        let sttKey: String
+        let sttBaseURL: String
+        let llmKey: String
+        let llmBaseURL: String
+
+        switch routing {
+        case .userProvidedKeys:
+            sttKey = settings.apiKey(for: sttProvider)
+            sttBaseURL = settings.baseURL(for: sttProvider)
+            llmKey = settings.apiKey(for: llmProvider)
+            llmBaseURL = settings.baseURL(for: llmProvider)
+        case .subscription(let bearer, let baseURL):
+            // Phase 2: a signed-in paid user routes every call through the Glide
+            // backend with their ID-token bearer. Phase 1 never reaches this arm.
+            sttKey = bearer
+            sttBaseURL = baseURL
+            llmKey = bearer
+            llmBaseURL = baseURL
+        }
 
         guard !sttKey.isEmpty else {
             throw GlideCoreError.apiError("Open Glide to set up your API key")
         }
-
-        let llmProvider = selectedStyle?.llmProvider ?? settings.llmProvider
-        let llmModel = selectedStyle?.llmModel ?? settings.llmModel
-        let llmKey = settings.apiKey(for: llmProvider)
-        let llmBaseURL = settings.baseURL(for: llmProvider)
-        let systemPrompt = selectedStyle?.prompt ?? settings.systemPrompt
 
         return LiveDictationProcessingConfig(
             sttProvider: sttProvider,

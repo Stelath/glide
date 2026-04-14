@@ -42,6 +42,16 @@ tokio = { version = "1", features = ["full"] }
 confy = "0.6"
 keyring = { version = "3", features = ["apple-native"] }
 
+# OAuth 2.0 (Google sign in via loopback + PKCE)
+url = "2"
+tiny_http = "0.12"
+open = "5"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+# Date/time for Account::issued_at / expires_at
+chrono = { version = "0.4", features = ["serde"] }
+
 # Error handling
 anyhow = "1"
 async-trait = "0.1"

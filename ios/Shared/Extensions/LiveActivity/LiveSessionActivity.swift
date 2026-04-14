@@ -4,8 +4,8 @@ import Foundation
 
 // MARK: - Activity Attributes
 
-struct LiveSessionAttributes: ActivityAttributes {
-    struct ContentState: Codable, Hashable {
+struct LiveSessionAttributes: ActivityAttributes, Sendable {
+    struct ContentState: Codable, Hashable, Sendable {
         var phase: String
         var snippetCount: Int
     }

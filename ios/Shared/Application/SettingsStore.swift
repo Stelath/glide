@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import Security
 
 enum VerificationState: Equatable, Sendable {
     case idle
@@ -19,6 +18,9 @@ final class SettingsStore {
 
     @ObservationIgnored
     private let store: AppGroupKeyValueStore
+
+    @ObservationIgnored
+    private let secretStore: KeychainSecretStore
 
     @ObservationIgnored
     private var isReloading = false
@@ -83,6 +85,7 @@ final class SettingsStore {
 
     private init() {
         store = AppGroupKeyValueStore(appGroupIdentifier: Self.suiteName, fileName: "settings.store")
+        secretStore = KeychainSecretStore(accessGroup: Self.suiteName, fallbackStore: store)
 
         openAIApiKey = ""
         openAIBaseURL = ProviderInfo.openAI.defaultBaseURL
@@ -103,6 +106,7 @@ final class SettingsStore {
     /// Preview-only initializer — does not read from disk.
     init(preview: Bool) {
         store = AppGroupKeyValueStore(appGroupIdentifier: Self.suiteName, fileName: "settings.store")
+        secretStore = KeychainSecretStore(accessGroup: Self.suiteName, fallbackStore: store)
         openAIApiKey = ""
         openAIBaseURL = ProviderInfo.openAI.defaultBaseURL
         groqApiKey = ""
@@ -266,67 +270,12 @@ final class SettingsStore {
 
     private func persistSecret(_ value: String, service: String) {
         guard !isReloading else { return }
-        writeSecret(service: service, value: value)
+        secretStore.write(service: service, value: value)
         postSettingsChangedNotification()
     }
 
     private func readSecret(service: String) -> String {
-        for accessGroup in [Self.suiteName, nil] {
-            let query = secretQuery(service: service, accessGroup: accessGroup, returnData: true)
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            if status == errSecSuccess,
-               let data = result as? Data,
-               let value = String(data: data, encoding: .utf8) {
-                return value
-            }
-        }
-
-        return store.string(forKey: secretFallbackKey(for: service)) ?? ""
-    }
-
-    private func writeSecret(service: String, value: String) {
-        store.removeObject(forKey: secretFallbackKey(for: service))
-
-        for accessGroup in [Self.suiteName, nil] {
-            let baseQuery = secretQuery(service: service, accessGroup: accessGroup, returnData: false)
-            SecItemDelete(baseQuery as CFDictionary)
-
-            guard !value.isEmpty else {
-                continue
-            }
-
-            var addQuery = baseQuery
-            addQuery[kSecValueData as String] = value.data(using: .utf8)
-            let status = SecItemAdd(addQuery as CFDictionary, nil)
-            if status == errSecSuccess {
-                return
-            }
-        }
-
-        if !value.isEmpty {
-            store.set(value, forKey: secretFallbackKey(for: service))
-        }
-    }
-
-    private func secretQuery(service: String, accessGroup: String?, returnData: Bool) -> [String: Any] {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: service,
-        ]
-        if let accessGroup {
-            query[kSecAttrAccessGroup as String] = accessGroup
-        }
-        if returnData {
-            query[kSecReturnData as String] = true
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-        }
-        return query
-    }
-
-    private func secretFallbackKey(for service: String) -> String {
-        "fallback_\(service)"
+        secretStore.read(service: service)
     }
 
     private func normalizedProvider(_ provider: String) -> String {

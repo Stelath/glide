@@ -24,10 +24,11 @@ fn strip_think_tags(text: &str) -> String {
 }
 
 use crate::{
+    account,
     app::{RuntimeStatus, SharedState},
     audio::RecordedAudio,
-    llm::{self, CleanupContext},
-    paste, stt,
+    llm::CleanupContext,
+    paste,
 };
 
 pub async fn process_recording(
@@ -59,8 +60,9 @@ pub async fn process_recording(
         "[glide] STT: transcribing {} samples via {:?} / {}...",
         audio.sample_count, stt_sel.provider, stt_sel.model
     );
-    let stt_provider = stt::build_provider(stt_sel.provider, &stt_sel.model, &config.providers)
-        .context("failed to build STT provider")?;
+    let stt_provider =
+        account::router::build_stt_provider(&config, stt_sel.provider, &stt_sel.model)
+            .context("failed to build STT provider")?;
     let raw_text = stt_provider
         .transcribe(&audio.bytes, audio.format)
         .await
@@ -85,9 +87,13 @@ pub async fn process_recording(
             "[glide] LLM: cleaning up via {:?} / {}...",
             llm.provider, llm.model
         );
-        let llm_provider =
-            llm::build_provider(llm.provider, &llm.model, system_prompt, &config.providers)
-                .with_context(|| format!("failed to build LLM provider"))?;
+        let llm_provider = account::router::build_llm_provider(
+            &config,
+            llm.provider,
+            &llm.model,
+            system_prompt,
+        )
+        .with_context(|| "failed to build LLM provider".to_string())?;
         llm_provider
             .clean(
                 &raw_text,

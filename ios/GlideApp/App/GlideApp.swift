@@ -3,13 +3,16 @@ import SwiftUI
 @main
 struct GlideApp: App {
     @State private var settings = SettingsStore.shared
+    @State private var accountStore = AccountStore.shared
     @State private var liveSession = LiveDictationManager.shared
     @State private var showLiveSessionScreen = false
 
     var body: some Scene {
         WindowGroup {
             Group {
-                if !settings.hasCompletedOnboarding {
+                if !accountStore.hasSeenWelcome {
+                    WelcomeSignInView()
+                } else if !settings.hasCompletedOnboarding {
                     OnboardingView()
                 } else if showLiveSessionScreen {
                     LiveSessionActiveView(showLiveSessionScreen: $showLiveSessionScreen)
@@ -17,9 +20,11 @@ struct GlideApp: App {
                     ContentView()
                 }
             }
+            .animation(.easeInOut(duration: 0.3), value: accountStore.hasSeenWelcome)
             .animation(.easeInOut(duration: 0.3), value: settings.hasCompletedOnboarding)
             .animation(.easeInOut(duration: 0.3), value: showLiveSessionScreen)
             .environment(settings)
+            .environment(accountStore)
             .environment(liveSession)
             .tint(settings.accent.primary)
             .onOpenURL { url in

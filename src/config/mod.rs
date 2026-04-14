@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::account::AccountState;
+
 pub fn asset_path(relative: &str) -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     let bundle_resources = exe
@@ -45,6 +47,8 @@ pub struct GlideConfig {
     pub dictation: DictationConfig,
     pub overlay: OverlayConfig,
     pub paste: PasteConfig,
+    #[serde(default)]
+    pub account: AccountState,
 }
 
 impl Default for GlideConfig {
@@ -57,6 +61,7 @@ impl Default for GlideConfig {
             dictation: DictationConfig::default(),
             overlay: OverlayConfig::default(),
             paste: PasteConfig::default(),
+            account: AccountState::default(),
         }
     }
 }
