@@ -65,6 +65,25 @@ pub struct Style {
 }
 
 // ---------------------------------------------------------------------------
+// Dictionary config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DictionaryConfig {
+    pub vocabulary: Vec<String>,
+    pub replacements: Vec<ReplacementRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacementRule {
+    pub find: String,
+    pub replace: String,
+    #[serde(default)]
+    pub case_sensitive: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Model caching & fetching
 // ---------------------------------------------------------------------------
 

@@ -17,6 +17,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
+
+            DictionaryView()
+                .tabItem {
+                    Label("Dictionary", systemImage: "book")
+                }
         }
     }
 }

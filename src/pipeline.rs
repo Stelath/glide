@@ -26,9 +26,36 @@ fn strip_think_tags(text: &str) -> String {
 use crate::{
     app::{RuntimeStatus, SharedState},
     audio::RecordedAudio,
+    config::ReplacementRule,
     llm::{self, CleanupContext},
     paste, stt,
 };
+
+fn apply_replacements(text: &str, replacements: &[ReplacementRule]) -> String {
+    let mut result = text.to_string();
+    for rule in replacements {
+        if rule.find.is_empty() {
+            continue;
+        }
+        if rule.case_sensitive {
+            result = result.replace(&rule.find, &rule.replace);
+        } else {
+            let mut output = String::with_capacity(result.len());
+            let lower_find = rule.find.to_lowercase();
+            let mut search_start = 0;
+            let lower_result = result.to_lowercase();
+            while let Some(pos) = lower_result[search_start..].find(&lower_find) {
+                let abs_pos = search_start + pos;
+                output.push_str(&result[search_start..abs_pos]);
+                output.push_str(&rule.replace);
+                search_start = abs_pos + rule.find.len();
+            }
+            output.push_str(&result[search_start..]);
+            result = output;
+        }
+    }
+    result
+}
 
 pub async fn process_recording(
     shared: SharedState,
@@ -59,8 +86,15 @@ pub async fn process_recording(
         "[glide] STT: transcribing {} samples via {:?} / {}...",
         audio.sample_count, stt_sel.provider, stt_sel.model
     );
-    let stt_provider = stt::build_provider(stt_sel.provider, &stt_sel.model, &config.providers)
-        .context("failed to build STT provider")?;
+    let vocab_prompt = if config.dictionary.vocabulary.is_empty() {
+        None
+    } else {
+        Some(config.dictionary.vocabulary.join(", "))
+    };
+
+    let stt_provider =
+        stt::build_provider(stt_sel.provider, &stt_sel.model, &config.providers, vocab_prompt)
+            .context("failed to build STT provider")?;
     let raw_text = stt_provider
         .transcribe(&audio.bytes, audio.format)
         .await
@@ -70,6 +104,8 @@ pub async fn process_recording(
         !raw_text.trim().is_empty(),
         "transcription returned no text"
     );
+
+    let raw_text = apply_replacements(&raw_text, &config.dictionary.replacements);
     eprintln!("[glide] STT: got transcript ({} chars)", raw_text.len());
 
     // Resolve effective LLM settings

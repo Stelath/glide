@@ -9,7 +9,7 @@ pub use macos::{
 pub use models::{
     any_provider_verified, apply_smart_defaults_initial, cached_llm_models,
     cached_stt_models, fetch_all_models, provider_verified, smart_llm_default, smart_stt_default,
-    DictationConfig, ModelInfo, ModelSelection, Style,
+    DictationConfig, DictionaryConfig, ModelInfo, ModelSelection, ReplacementRule, Style,
 };
 pub use providers::{Provider, ProvidersConfig};
 
@@ -43,6 +43,7 @@ pub struct GlideConfig {
     pub audio: AudioConfig,
     pub providers: ProvidersConfig,
     pub dictation: DictationConfig,
+    pub dictionary: DictionaryConfig,
     pub overlay: OverlayConfig,
     pub paste: PasteConfig,
 }
@@ -55,6 +56,7 @@ impl Default for GlideConfig {
             audio: AudioConfig::default(),
             providers: ProvidersConfig::default(),
             dictation: DictationConfig::default(),
+            dictionary: DictionaryConfig::default(),
             overlay: OverlayConfig::default(),
             paste: PasteConfig::default(),
         }

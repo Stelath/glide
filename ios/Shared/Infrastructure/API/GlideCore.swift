@@ -49,7 +49,8 @@ actor GlideCoreBridge {
         provider: String,
         model: String,
         apiKey: String,
-        baseURL: String
+        baseURL: String,
+        prompt: String? = nil
     ) async throws -> String {
         guard !audioData.isEmpty else {
             throw GlideCoreError.emptyAudio
@@ -66,6 +67,9 @@ actor GlideCoreBridge {
 
         var body = Data()
         body.appendMultipart(boundary: boundary, name: "model", value: model)
+        if let prompt, !prompt.isEmpty {
+            body.appendMultipart(boundary: boundary, name: "prompt", value: prompt)
+        }
         body.appendMultipart(boundary: boundary, name: "file", filename: "glide.wav", mimeType: "audio/wav", data: audioData)
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body

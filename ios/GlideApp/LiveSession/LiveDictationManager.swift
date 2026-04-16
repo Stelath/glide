@@ -14,6 +14,8 @@ private struct LiveDictationProcessingConfig: Sendable {
     let llmKey: String
     let llmBaseURL: String
     let systemPrompt: String
+    let vocabularyPrompt: String?
+    let replacements: [ReplacementRule]
 }
 
 @MainActor
@@ -324,8 +326,11 @@ final class LiveDictationManager {
                     provider: processingConfig.sttProvider,
                     model: processingConfig.sttModel,
                     apiKey: processingConfig.sttKey,
-                    baseURL: processingConfig.sttBaseURL
+                    baseURL: processingConfig.sttBaseURL,
+                    prompt: processingConfig.vocabularyPrompt
                 )
+
+                text = Self.applyReplacements(text, rules: processingConfig.replacements)
 
                 if processingConfig.llmEnabled,
                    !processingConfig.llmKey.isEmpty,
@@ -395,6 +400,9 @@ final class LiveDictationManager {
         let llmBaseURL = settings.baseURL(for: llmProvider)
         let systemPrompt = selectedStyle?.prompt ?? settings.systemPrompt
 
+        let vocab = settings.vocabulary
+        let vocabPrompt: String? = vocab.isEmpty ? nil : vocab.joined(separator: ", ")
+
         return LiveDictationProcessingConfig(
             sttProvider: sttProvider,
             sttModel: sttModel,
@@ -405,7 +413,9 @@ final class LiveDictationManager {
             llmModel: llmModel,
             llmKey: llmKey,
             llmBaseURL: llmBaseURL,
-            systemPrompt: systemPrompt
+            systemPrompt: systemPrompt,
+            vocabularyPrompt: vocabPrompt,
+            replacements: settings.replacements
         )
     }
 
@@ -478,6 +488,21 @@ final class LiveDictationManager {
             syncSnapshot()
             endLiveActivity()
         }
+    }
+
+    private static func applyReplacements(_ text: String, rules: [ReplacementRule]) -> String {
+        var result = text
+        for rule in rules where !rule.find.isEmpty {
+            if rule.caseSensitive {
+                result = result.replacingOccurrences(of: rule.find, with: rule.replace)
+            } else {
+                result = result.replacingOccurrences(
+                    of: rule.find, with: rule.replace,
+                    options: .caseInsensitive
+                )
+            }
+        }
+        return result
     }
 
     private func friendlyErrorMessage(for error: Error) -> String {

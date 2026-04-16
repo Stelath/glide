@@ -12,10 +12,16 @@ pub struct OpenAiSttProvider {
     endpoint: String,
     default_model: String,
     api_key: String,
+    prompt: Option<String>,
 }
 
 impl OpenAiSttProvider {
-    pub fn new(provider: Provider, model: &str, providers: &ProvidersConfig) -> Result<Self> {
+    pub fn new(
+        provider: Provider,
+        model: &str,
+        providers: &ProvidersConfig,
+        prompt: Option<String>,
+    ) -> Result<Self> {
         let creds = providers.credentials_for(provider);
         let api_key = creds.resolve_api_key("speech-to-text")?;
         let endpoint = provider.stt_endpoint(&creds.base_url);
@@ -24,6 +30,7 @@ impl OpenAiSttProvider {
             endpoint,
             default_model: model.to_string(),
             api_key,
+            prompt,
         })
     }
 }
@@ -45,9 +52,15 @@ impl super::SttProvider for OpenAiSttProvider {
             .mime_str(mime)
             .context("failed to create audio upload body")?;
 
-        let form = multipart::Form::new()
+        let mut form = multipart::Form::new()
             .text("model", self.default_model.clone())
             .part("file", file_part);
+
+        if let Some(ref prompt) = self.prompt {
+            if !prompt.is_empty() {
+                form = form.text("prompt", prompt.clone());
+            }
+        }
 
         let response = self
             .client

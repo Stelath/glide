@@ -48,6 +48,7 @@ enum SettingsPane {
     Providers,
     Styles,
     General,
+    Dictionary,
 }
 
 struct ProviderInputs {
@@ -75,6 +76,7 @@ pub struct SettingsApp {
     groq_inputs: ProviderInputs,
     expanded_provider: Option<usize>,
     expanded_style: Option<usize>,
+    prompt_expanded: bool,
 
     default_prompt: Entity<InputState>,
     default_stt_search: Entity<InputState>,
@@ -85,6 +87,11 @@ pub struct SettingsApp {
     last_fetched_groq_key: String,
 
     save_pending: bool,
+
+    // Dictionary inputs
+    vocabulary_input: Entity<InputState>,
+    replacement_find_input: Entity<InputState>,
+    replacement_replace_input: Entity<InputState>,
 
     // Onboarding overlay state
     show_onboarding: bool,
@@ -129,6 +136,9 @@ impl SettingsApp {
         });
         let default_stt_search = cx.new(|cx| InputState::new(window, cx));
         let default_llm_search = cx.new(|cx| InputState::new(window, cx));
+        let vocabulary_input = cx.new(|cx| InputState::new(window, cx));
+        let replacement_find_input = cx.new(|cx| InputState::new(window, cx));
+        let replacement_replace_input = cx.new(|cx| InputState::new(window, cx));
 
         let mut subs = vec![
             cx.subscribe_in(&openai_api_key, window, Self::on_input_change),
@@ -221,6 +231,7 @@ impl SettingsApp {
             },
             expanded_provider: Some(0),
             expanded_style: Some(0),
+            prompt_expanded: false,
             default_prompt,
             default_stt_search,
             default_llm_search,
@@ -228,6 +239,9 @@ impl SettingsApp {
             last_fetched_openai_key: config.providers.openai.api_key.clone(),
             last_fetched_groq_key: config.providers.groq.api_key.clone(),
             save_pending: false,
+            vocabulary_input,
+            replacement_find_input,
+            replacement_replace_input,
             show_onboarding,
             onboarding_step: onboarding::OnboardingStep::Welcome,
             onboarding_perm_state: onboarding::PermissionState::check(),
@@ -381,6 +395,15 @@ impl SettingsApp {
                             this.active_pane = SettingsPane::Providers;
                             cx.notify();
                         })),
+                )
+                .child(
+                    SidebarMenuItem::new("Dictionary")
+                        .icon(Icon::new(IconName::BookOpen))
+                        .active(self.active_pane == SettingsPane::Dictionary)
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.active_pane = SettingsPane::Dictionary;
+                            cx.notify();
+                        })),
                 ),
         )
     }
@@ -407,6 +430,9 @@ impl SettingsApp {
                 SettingsPane::Styles => self.render_styles_pane(window, cx).into_any_element(),
                 SettingsPane::General => self
                     .render_general_pane(window, cx, &snapshot)
+                    .into_any_element(),
+                SettingsPane::Dictionary => self
+                    .render_dictionary_pane(window, cx)
                     .into_any_element(),
             })
     }

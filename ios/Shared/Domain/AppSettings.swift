@@ -40,6 +40,13 @@ struct DictationStyle: Codable, Identifiable, Hashable, Sendable {
     var llmModel: String? = nil
 }
 
+struct ReplacementRule: Codable, Identifiable, Hashable, Sendable {
+    var id: UUID = UUID()
+    var find: String
+    var replace: String
+    var caseSensitive: Bool = false
+}
+
 struct ModelOption: Hashable, Sendable {
     let provider: String
     let model: String

@@ -63,6 +63,12 @@ unsafe fn nsstring_cstr(s: &[u8]) -> *mut c_void {
     }
 }
 
+unsafe fn objc_release(obj: *mut c_void) {
+    unsafe {
+        objc_msgSend(obj, sel_registerName(b"release\0".as_ptr()));
+    }
+}
+
 type MsgSendF64 = unsafe extern "C" fn(*mut c_void, *mut c_void, f64) -> *mut c_void;
 type MsgSendF32 = unsafe extern "C" fn(*mut c_void, *mut c_void, f32) -> *mut c_void;
 type MsgSendBool = unsafe extern "C" fn(*mut c_void, *mut c_void, bool) -> *mut c_void;
@@ -225,6 +231,7 @@ pub(super) fn create_notch_panel(
             sel_registerName(b"setContentView:\0".as_ptr()),
             content_view,
         );
+        objc_release(content_view);
 
         let total_bars_width =
             bar_count as f64 * NOTCH_BAR_WIDTH + (bar_count as f64 - 1.0) * NOTCH_BAR_GAP;
@@ -274,6 +281,7 @@ pub(super) fn create_notch_panel(
                 sel_registerName(b"addSublayer:\0".as_ptr()),
                 bar_layer,
             );
+            objc_release(bar_layer);
             bar_layers.push(bar_layer);
         }
 
@@ -315,6 +323,7 @@ pub(super) fn create_notch_panel(
                 sel_registerName(b"addSublayer:\0".as_ptr()),
                 dot_layer,
             );
+            objc_release(dot_layer);
             dot_layers.push(dot_layer);
         }
 
@@ -462,6 +471,7 @@ pub(super) fn update_notch_loading(state: &mut NotchPanelState) {
 pub(super) fn close_notch_panel(state: &NotchPanelState) {
     unsafe {
         objc_msgSend(state.panel, sel_registerName(b"orderOut:\0".as_ptr()));
+        objc_release(state.panel);
     }
 }
 
@@ -585,6 +595,7 @@ pub(super) fn create_notch_glow_panel(
             sel_registerName(b"setContentView:\0".as_ptr()),
             content_view,
         );
+        objc_release(content_view);
 
         let left = GLOW_PADDING;
         let right = panel_w - GLOW_PADDING;
@@ -783,6 +794,7 @@ pub(super) fn create_notch_glow_panel(
                 sel_registerName(b"addSublayer:\0".as_ptr()),
                 rainbow_grad,
             );
+            objc_release(rainbow_grad);
 
             // --- Mask: CAShapeLayer with the notch path (stroke only) ---
             let mask_shape = objc_msgSend(shape_class, sel_registerName(b"new\0".as_ptr()));
@@ -813,12 +825,14 @@ pub(super) fn create_notch_glow_panel(
                 sel_registerName(b"setMask:\0".as_ptr()),
                 mask_shape,
             );
+            objc_release(mask_shape);
 
             msg_ptr(
                 root_layer,
                 sel_registerName(b"addSublayer:\0".as_ptr()),
                 container,
             );
+            objc_release(container);
 
             // --- Animate gradient scroll so rainbow flows along the path ---
             let rb_anim_class = objc_getClass(b"CABasicAnimation\0".as_ptr());
@@ -914,6 +928,7 @@ pub(super) fn create_notch_glow_panel(
                 subdued_cg,
             );
         }
+        objc_release(glow_layer);
 
         let ns_number = objc_getClass(b"NSNumber\0".as_ptr());
         let ca_anim_class = objc_getClass(b"CABasicAnimation\0".as_ptr());
@@ -1112,6 +1127,8 @@ pub(super) fn create_notch_glow_panel(
             anim,
             nsstring_cstr(b"slide\0"),
         );
+        objc_release(grad);
+        objc_release(comet);
 
         CGPathRelease(cg_path);
 
@@ -1162,5 +1179,6 @@ pub(super) fn create_notch_glow_panel(
 pub(super) fn close_notch_glow_panel(state: &NotchGlowState) {
     unsafe {
         objc_msgSend(state.panel, sel_registerName(b"orderOut:\0".as_ptr()));
+        objc_release(state.panel);
     }
 }

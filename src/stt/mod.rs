@@ -17,11 +17,15 @@ pub fn build_provider(
     provider: Provider,
     model: &str,
     providers: &ProvidersConfig,
+    vocabulary_prompt: Option<String>,
 ) -> Result<Box<dyn SttProvider>> {
     match provider {
         // Both OpenAI and Groq use the OpenAI-compatible API format
         Provider::OpenAi | Provider::Groq => Ok(Box::new(openai::OpenAiSttProvider::new(
-            provider, model, providers,
+            provider,
+            model,
+            providers,
+            vocabulary_prompt,
         )?)),
     }
 }

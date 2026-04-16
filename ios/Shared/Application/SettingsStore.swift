@@ -46,6 +46,11 @@ final class SettingsStore {
     var systemPrompt: String { didSet { persistString(systemPrompt, key: "system_prompt") } }
     var styles: [DictationStyle] { didSet { persistStyles(styles) } }
 
+    // MARK: - Dictionary
+
+    var vocabulary: [String] { didSet { persistVocabulary(vocabulary) } }
+    var replacements: [ReplacementRule] { didSet { persistReplacements(replacements) } }
+
     // MARK: - Appearance
 
     var accent: GlideAccent { didSet { persistString(accent.rawValue, key: "accent") } }
@@ -94,6 +99,8 @@ final class SettingsStore {
         llmModel = ""
         systemPrompt = Self.defaultSystemPrompt
         styles = Self.defaultStyles
+        vocabulary = []
+        replacements = []
         accent = .slate
         hasCompletedOnboarding = false
 
@@ -113,6 +120,8 @@ final class SettingsStore {
         llmModel = ""
         systemPrompt = Self.defaultSystemPrompt
         styles = Self.defaultStyles
+        vocabulary = []
+        replacements = []
         accent = .slate
         hasCompletedOnboarding = false
     }
@@ -131,6 +140,8 @@ final class SettingsStore {
         llmModel = store.string(forKey: "llm_model") ?? ""
         systemPrompt = store.string(forKey: "system_prompt") ?? Self.defaultSystemPrompt
         styles = readStyles()
+        vocabulary = readVocabulary()
+        replacements = readReplacements()
         accent = GlideAccent(rawValue: store.string(forKey: "accent") ?? "") ?? .slate
         hasCompletedOnboarding = store.bool(forKey: "has_completed_onboarding")
         isReloading = false
@@ -260,6 +271,40 @@ final class SettingsStore {
               let decoded = try? JSONDecoder().decode([DictationStyle].self, from: data)
         else {
             return Self.defaultStyles
+        }
+        return decoded
+    }
+
+    private func persistVocabulary(_ value: [String]) {
+        guard !isReloading else { return }
+        if let data = try? JSONEncoder().encode(value) {
+            store.set(data, forKey: "vocabulary")
+            postSettingsChangedNotification()
+        }
+    }
+
+    private func readVocabulary() -> [String] {
+        guard let data = store.data(forKey: "vocabulary"),
+              let decoded = try? JSONDecoder().decode([String].self, from: data)
+        else {
+            return []
+        }
+        return decoded
+    }
+
+    private func persistReplacements(_ value: [ReplacementRule]) {
+        guard !isReloading else { return }
+        if let data = try? JSONEncoder().encode(value) {
+            store.set(data, forKey: "replacements")
+            postSettingsChangedNotification()
+        }
+    }
+
+    private func readReplacements() -> [ReplacementRule] {
+        guard let data = store.data(forKey: "replacements"),
+              let decoded = try? JSONDecoder().decode([ReplacementRule].self, from: data)
+        else {
+            return []
         }
         return decoded
     }
