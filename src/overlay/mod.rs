@@ -336,7 +336,7 @@ impl OverlayController {
             if let Some(state) = create_notch_glow_panel(config.app.accent.glow_rgb()) {
                 self.active = Some(ActiveOverlay::NotchGlow(state));
             } else {
-                eprintln!("[glide] glow overlay: notch not detected, cannot create glow panel");
+                eprintln!("[glide] glow overlay: failed to create glow panel");
             }
             return;
         }

@@ -595,9 +595,10 @@ impl SettingsApp {
 
         // -- Recording Window --
         let mut style_cards = div().flex().gap_3().flex_1();
+        let is_macos = cfg!(target_os = "macos");
         let has_notch = crate::config::notch_width().is_some();
         for style in OverlayStyle::ALL {
-            if style == OverlayStyle::Glow && !has_notch {
+            if style == OverlayStyle::Glow && !is_macos {
                 continue;
             }
             let is_active = style == current_overlay;

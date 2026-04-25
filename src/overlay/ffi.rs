@@ -2,6 +2,7 @@ use std::ffi::c_void;
 use std::sync::{Arc, Mutex};
 
 pub(super) const NOTCH_WIDTH_FALLBACK: u32 = 180;
+const NOTCH_HEIGHT_FALLBACK: f64 = 37.0;
 const NOTCH_HEIGHT: f64 = 60.0;
 const NOTCH_CORNER_RADIUS: f64 = 10.0;
 pub(super) const NOTCH_BAR_COUNT: usize = 16;
@@ -489,7 +490,8 @@ unsafe impl Sync for NotchGlowState {}
 pub(super) fn create_notch_glow_panel(
     glow_rgb: Option<(f64, f64, f64)>,
 ) -> Option<Arc<Mutex<NotchGlowState>>> {
-    let (notch_w, notch_h) = crate::config::notch_dimensions()?;
+    let (notch_w, notch_h) = crate::config::notch_dimensions()
+        .unwrap_or((NOTCH_WIDTH_FALLBACK as f64, NOTCH_HEIGHT_FALLBACK));
     let panel_w = notch_w + 2.0 * GLOW_PADDING;
     let panel_h = notch_h + GLOW_PADDING;
     let r = GLOW_CORNER_RADIUS;
