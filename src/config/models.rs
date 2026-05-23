@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 use super::GlideConfig;
 use super::providers::{Provider, ProvidersConfig};
 
+const DEFAULT_PROMPT: &str = include_str!("prompts/default.md");
+const PROFESSIONAL_PROMPT: &str = include_str!("prompts/professional.md");
+const MESSAGING_PROMPT: &str = include_str!("prompts/messaging.md");
+const CODING_PROMPT: &str = include_str!("prompts/coding.md");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSelection {
     pub provider: Provider,
@@ -31,19 +36,26 @@ impl Default for DictationConfig {
             },
             llm: None,
             smart_defaults_applied: false,
-            system_prompt: "You are a dictation post-processor. You receive raw speech-to-text output and return clean text ready to be typed into an application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context or custom vocabulary, correct the spelling. Never insert names or terms from context that the speaker did not say.\n- Preserve the speaker's intent, tone, and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription. The context is only for correcting spelling of words already spoken.\n- Do not change the meaning of what was said.".to_string(),
+            system_prompt: DEFAULT_PROMPT.trim_end().to_string(),
             styles: vec![
                 Style {
                     name: "Professional".to_string(),
                     apps: vec![],
-                    prompt: "You are a dictation post-processor for professional communication. You receive raw speech-to-text output and return clean, formal text ready to be typed into a work application.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning.\n- Fix spelling, grammar, and punctuation errors.\n- Elevate the language to a professional, clear, and well-structured tone.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's intent and meaning exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
+                    prompt: PROFESSIONAL_PROMPT.trim_end().to_string(),
                     stt: None,
                     llm: None,
                 },
                 Style {
                     name: "Messaging".to_string(),
                     apps: vec![],
-                    prompt: "You are a dictation post-processor for casual messaging. You receive raw speech-to-text output and return clean, conversational text ready to be sent in a chat or text message.\n\nYour job:\n- Remove filler words (um, uh, you know, like) unless they carry meaning or add personality.\n- Fix obvious spelling and grammar errors, but keep the tone informal and natural.\n- Use casual punctuation\u{2014}lowercase is fine, fragments are OK.\n- When the transcript already contains a word that is a close misspelling of a name or term from the context, correct the spelling. Never insert names or terms the speaker did not say.\n- Preserve the speaker's voice and conversational style exactly.\n\nOutput rules:\n- Return ONLY the cleaned transcript text, nothing else.\n- If the transcription is empty, return exactly: EMPTY\n- Do not add words, names, or content that are not in the transcription.\n- Do not change the meaning of what was said.".to_string(),
+                    prompt: MESSAGING_PROMPT.trim_end().to_string(),
+                    stt: None,
+                    llm: None,
+                },
+                Style {
+                    name: "Coding".to_string(),
+                    apps: vec![],
+                    prompt: CODING_PROMPT.trim_end().to_string(),
                     stt: None,
                     llm: None,
                 },
