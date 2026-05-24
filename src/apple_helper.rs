@@ -1,13 +1,16 @@
 use std::{
-    io::Write,
+    error::Error,
+    fmt,
+    io::{BufRead, BufReader, Write},
     path::PathBuf,
-    process::{Command, ExitStatus, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     sync::{Mutex, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::llm::CleanupContext;
 
@@ -113,7 +116,15 @@ struct CleanupRequest<'a> {
     mode_hint: Option<&'a str>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistentHelperRequest<'a> {
+    command: &'a str,
+    request: Value,
+}
+
 static CAPABILITIES: OnceLock<Mutex<Option<AppleCapabilities>>> = OnceLock::new();
+static PERSISTENT_HELPER: OnceLock<Mutex<PersistentHelperClient>> = OnceLock::new();
 
 pub fn cached_capabilities() -> AppleCapabilities {
     let cache = CAPABILITIES.get_or_init(|| Mutex::new(None));
@@ -178,12 +189,17 @@ pub fn transcribe(audio: &[u8], model_id: String, vocabulary: Vec<String>) -> Re
         vocabulary,
     };
     let input = serde_json::to_vec(&request).context("failed to encode Apple Speech request")?;
-    let result = run_helper("transcribe", Some(&input)).and_then(|response| {
+    let started = Instant::now();
+    let result = run_persistent_helper("transcribe", &input).and_then(|response| {
         response
             .text
             .map(|text| text.trim().to_string())
             .context("Apple Speech helper did not return text")
     });
+    eprintln!(
+        "[glide] Apple helper: transcribe request finished in {} ms",
+        started.elapsed().as_millis()
+    );
     std::fs::remove_file(&audio_path).ok();
     result
 }
@@ -203,12 +219,202 @@ pub fn cleanup(
     };
     let input =
         serde_json::to_vec(&request).context("failed to encode Apple Foundation Models request")?;
-    run_helper("cleanup", Some(&input)).and_then(|response| {
+    let started = Instant::now();
+    let result = run_persistent_helper("cleanup", &input).and_then(|response| {
         response
             .text
             .map(|text| text.trim().to_string())
             .context("Apple Foundation Models helper did not return text")
-    })
+    });
+    eprintln!(
+        "[glide] Apple helper: cleanup request finished in {} ms",
+        started.elapsed().as_millis()
+    );
+    result
+}
+
+fn run_persistent_helper(command: &str, input: &[u8]) -> Result<HelperResponse> {
+    let helper = helper_path()?;
+    let client = PERSISTENT_HELPER.get_or_init(|| Mutex::new(PersistentHelperClient::new(helper)));
+    client
+        .lock()
+        .expect("Apple persistent helper client poisoned")
+        .request(command, input)
+}
+
+#[derive(Debug)]
+struct PersistentTransportError {
+    message: String,
+}
+
+impl PersistentTransportError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for PersistentTransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(f)
+    }
+}
+
+impl Error for PersistentTransportError {}
+
+struct PersistentHelperClient {
+    helper: PathBuf,
+    server: Option<PersistentHelperServer>,
+}
+
+struct PersistentHelperServer {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl PersistentHelperClient {
+    fn new(helper: PathBuf) -> Self {
+        Self {
+            helper,
+            server: None,
+        }
+    }
+
+    fn request(&mut self, command: &str, input: &[u8]) -> Result<HelperResponse> {
+        let request = persistent_request_json(command, input)?;
+        for attempt in 0..=1 {
+            if self.server.is_none() {
+                self.start_server()?;
+            }
+
+            let result = self
+                .server
+                .as_mut()
+                .context("Apple persistent helper server was unavailable")?
+                .send(command, &request);
+
+            match result {
+                Ok(response) => return Ok(response),
+                Err(error) if attempt == 0 && is_transport_error(error.as_ref()) => {
+                    eprintln!(
+                        "[glide] Apple helper: persistent server failed, restarting: {error:#}"
+                    );
+                    self.stop_server();
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        unreachable!("persistent helper retry loop should always return")
+    }
+
+    fn start_server(&mut self) -> Result<()> {
+        let mut child = Command::new(&self.helper)
+            .arg("serve")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .with_context(|| {
+                format!(
+                    "failed to start persistent Apple helper at {}",
+                    self.helper.display()
+                )
+            })?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .context("failed to open persistent Apple helper stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("failed to open persistent Apple helper stdout")?;
+
+        eprintln!(
+            "[glide] Apple helper: started persistent server at {}",
+            self.helper.display()
+        );
+        self.server = Some(PersistentHelperServer {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        });
+        Ok(())
+    }
+
+    fn stop_server(&mut self) {
+        if let Some(mut server) = self.server.take() {
+            let _ = server.child.kill();
+            let _ = server.child.wait();
+        }
+    }
+}
+
+impl PersistentHelperServer {
+    fn send(&mut self, command: &str, request: &[u8]) -> Result<HelperResponse> {
+        self.stdin
+            .write_all(request)
+            .map_err(|error| persistent_transport_error("write request", error))?;
+        self.stdin
+            .write_all(b"\n")
+            .map_err(|error| persistent_transport_error("write request newline", error))?;
+        self.stdin
+            .flush()
+            .map_err(|error| persistent_transport_error("flush request", error))?;
+
+        let mut line = String::new();
+        let bytes = self
+            .stdout
+            .read_line(&mut line)
+            .map_err(|error| persistent_transport_error("read response", error))?;
+        if bytes == 0 {
+            return Err(
+                PersistentTransportError::new("persistent Apple helper closed stdout").into(),
+            );
+        }
+
+        decode_persistent_response(command, line.trim())
+    }
+}
+
+fn persistent_request_json(command: &str, input: &[u8]) -> Result<Vec<u8>> {
+    let request = serde_json::from_slice(input)
+        .with_context(|| format!("failed to encode persistent Apple helper {command} request"))?;
+    serde_json::to_vec(&PersistentHelperRequest { command, request })
+        .with_context(|| format!("failed to encode persistent Apple helper {command} envelope"))
+}
+
+fn decode_persistent_response(command: &str, line: &str) -> Result<HelperResponse> {
+    if line.is_empty() {
+        anyhow::bail!("Apple helper returned an empty {command} response");
+    }
+
+    let response: HelperResponse = serde_json::from_str(line).with_context(|| {
+        format!("failed to parse persistent Apple helper {command} response: {line}")
+    })?;
+    if !response.ok {
+        anyhow::bail!(
+            "{}",
+            response
+                .error
+                .unwrap_or_else(|| format!("Apple helper returned an error for {command}"))
+        );
+    }
+    Ok(response)
+}
+
+fn persistent_transport_error(action: &str, error: std::io::Error) -> anyhow::Error {
+    PersistentTransportError::new(format!(
+        "failed to {action} through persistent Apple helper: {error}"
+    ))
+    .into()
+}
+
+fn is_transport_error(error: &(dyn Error + 'static)) -> bool {
+    error.is::<PersistentTransportError>()
 }
 
 fn run_helper(command: &str, input: Option<&[u8]>) -> Result<HelperResponse> {
@@ -405,6 +611,81 @@ mod tests {
         let json = serde_json::to_string(&cleanup).unwrap();
         assert!(json.contains("modelId"));
         assert!(!json.contains("model_id"));
+    }
+
+    #[test]
+    fn encodes_persistent_helper_envelope() {
+        let request = TranscribeRequest {
+            audio_path: "/tmp/glide.wav".to_string(),
+            model_id: "speechanalyzer-en_US".to_string(),
+            vocabulary: vec!["Glide".to_string()],
+        };
+        let input = serde_json::to_vec(&request).unwrap();
+        let encoded = persistent_request_json("transcribe", &input).unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(envelope["command"], "transcribe");
+        assert_eq!(envelope["request"]["audioPath"], "/tmp/glide.wav");
+        assert_eq!(envelope["request"]["modelId"], "speechanalyzer-en_US");
+    }
+
+    #[test]
+    fn persistent_response_preserves_helper_error_message() {
+        let error = decode_persistent_response(
+            "cleanup",
+            r#"{"ok":false,"error":"Apple Foundation Model unavailable"}"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(error, "Apple Foundation Model unavailable");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_helper_restarts_after_transport_failure() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("first-run");
+        let helper = dir.path().join("helper.sh");
+        fs::write(
+            &helper,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" != "serve" ]; then
+  echo '{{"ok":false,"error":"unexpected command"}}'
+  exit 0
+fi
+if [ ! -f "{state}" ]; then
+  touch "{state}"
+  exit 0
+fi
+while IFS= read -r line; do
+  echo '{{"ok":true,"text":"warm"}}'
+done
+"#,
+                state = state.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&helper).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&helper, permissions).unwrap();
+
+        let cleanup = CleanupRequest {
+            model_id: "apple-foundation-default",
+            raw_text: "hello",
+            system_prompt: "clean",
+            target_app: None,
+            mode_hint: None,
+        };
+        let input = serde_json::to_vec(&cleanup).unwrap();
+        let mut client = PersistentHelperClient::new(helper);
+        let response = client.request("cleanup", &input).unwrap();
+
+        assert_eq!(response.text.as_deref(), Some("warm"));
     }
 
     #[test]

@@ -1,4 +1,7 @@
-use std::{thread, time::Duration};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use arboard::Clipboard;
@@ -55,6 +58,37 @@ fn restore_delay(config: &PasteConfig) -> Duration {
     Duration::from_millis(config.restore_delay_ms.max(MIN_RESTORE_DELAY_MS))
 }
 
+fn spawn_delayed_restore<F>(delay: Duration, restore: F) -> thread::JoinHandle<()>
+where
+    F: FnOnce() + Send + 'static,
+{
+    thread::spawn(move || {
+        thread::sleep(delay);
+        restore();
+    })
+}
+
+fn restore_clipboard_async(previous_text: String, delay: Duration) {
+    let scheduled = Instant::now();
+    spawn_delayed_restore(delay, move || {
+        let result = (|| -> Result<()> {
+            let mut clipboard = Clipboard::new().context("failed to re-open clipboard")?;
+            clipboard
+                .set_text(previous_text)
+                .context("failed to restore clipboard contents")?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => eprintln!(
+                "[glide] Paste: restored clipboard after {} ms",
+                scheduled.elapsed().as_millis()
+            ),
+            Err(error) => eprintln!("[glide] Paste: failed to restore clipboard: {error:#}"),
+        }
+    });
+}
+
 pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
     anyhow::ensure!(
         crate::permissions::has_accessibility_access(),
@@ -77,11 +111,7 @@ pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
     simulate_paste();
 
     if let Some(previous_text) = previous_text {
-        thread::sleep(restore_delay(config));
-        let mut clipboard = Clipboard::new().context("failed to re-open clipboard")?;
-        clipboard
-            .set_text(previous_text)
-            .context("failed to restore clipboard contents")?;
+        restore_clipboard_async(previous_text, restore_delay(config));
     }
 
     Ok(())
@@ -112,5 +142,14 @@ mod tests {
             restore_delay(&config),
             Duration::from_millis(MIN_RESTORE_DELAY_MS)
         );
+    }
+
+    #[test]
+    fn delayed_restore_returns_without_waiting_for_delay() {
+        let delay = Duration::from_millis(100);
+        let started = Instant::now();
+        let handle = spawn_delayed_restore(delay, || {});
+        assert!(started.elapsed() < delay / 2);
+        handle.join().unwrap();
     }
 }

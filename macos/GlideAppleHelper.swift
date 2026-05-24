@@ -125,6 +125,8 @@ struct GlideAppleHelper {
                 let request: SpeechModelRequest = try readStdinJSON()
                 try await releaseSpeechModel(request)
                 printResponse(HelperResponse(ok: true))
+            case "serve":
+                await serve()
             case "transcribe":
                 let request: TranscribeRequest = try readStdinJSON()
                 let text = try await transcribe(request)
@@ -281,51 +283,193 @@ struct GlideAppleHelper {
         _ = await AssetInventory.release(reservedLocale: locale)
     }
 
+    private static func serve() async {
+        guard #available(macOS 26.0, *) else {
+            serveUnavailable("Apple local models require macOS 26 or newer")
+            return
+        }
+
+        let runtime = Runtime()
+        while let line = readLine(strippingNewline: true) {
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                continue
+            }
+
+            let response: HelperResponse
+            do {
+                response = try await runtime.handle(line)
+            } catch {
+                response = .failure(error.localizedDescription)
+            }
+            printResponse(response)
+        }
+    }
+
+    private static func serveUnavailable(_ message: String) {
+        while readLine(strippingNewline: true) != nil {
+            printResponse(.failure(message))
+        }
+    }
+
+    @available(macOS 26.0, *)
+    private actor Runtime {
+        private var speechLocales: [String: Locale] = [:]
+        private var reservedSpeechModels = Set<String>()
+        private var foundationSessions: [String: [LanguageModelSession]] = [:]
+        private let maxWarmFoundationSessionsPerKey = 1
+
+        func handle(_ line: String) async throws -> HelperResponse {
+            let envelope = try GlideAppleHelper.decodeServeEnvelope(line)
+            switch envelope.command {
+            case "transcribe":
+                let request: TranscribeRequest = try GlideAppleHelper.decodeServeRequest(envelope.requestData)
+                let text = try await transcribe(request)
+                return HelperResponse(ok: true, text: text)
+            case "cleanup":
+                let request: CleanupRequest = try GlideAppleHelper.decodeServeRequest(envelope.requestData)
+                let text = try await cleanup(request)
+                return HelperResponse(ok: true, text: text)
+            default:
+                return .failure("unknown helper command: \(envelope.command)")
+            }
+        }
+
+        func transcribe(_ request: TranscribeRequest) async throws -> String {
+            try GlideAppleHelper.requireSignedHelper("Apple Speech")
+
+            let auth = await GlideAppleHelper.speechAuthorization()
+            guard auth == .authorized else {
+                throw HelperError("Speech recognition permission is not authorized")
+            }
+
+            let modelId = request.modelId ?? "\(appleSpeechModelPrefix)\(Locale.current.identifier)"
+            let locale = try await preparedSpeechLocale(for: modelId)
+            let audioURL = URL(fileURLWithPath: request.audioPath)
+            let audioFile = try AVAudioFile(forReading: audioURL)
+            let transcriber = GlideAppleHelper.makeSpeechTranscriber(locale: locale)
+            let analyzer = SpeechAnalyzer(
+                modules: [transcriber],
+                options: SpeechAnalyzer.Options(
+                    priority: .userInitiated,
+                    modelRetention: .processLifetime
+                )
+            )
+
+            try await analyzer.prepareToAnalyze(in: audioFile.processingFormat)
+
+            let resultTask = Task {
+                var parts: [String] = []
+                for try await result in transcriber.results {
+                    if result.isFinal {
+                        let text = String(result.text.characters)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty {
+                            parts.append(text)
+                        }
+                    }
+                }
+                return parts.joined(separator: " ")
+            }
+
+            do {
+                try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
+                let text = try await resultTask.value
+                guard !text.isEmpty else {
+                    throw HelperError("Apple Speech returned an empty transcript")
+                }
+                return text
+            } catch {
+                resultTask.cancel()
+                throw error
+            }
+        }
+
+        private func preparedSpeechLocale(for modelId: String) async throws -> Locale {
+            if let locale = speechLocales[modelId] {
+                return locale
+            }
+
+            let locale = try await GlideAppleHelper.locale(forModelId: modelId)
+            let transcriber = GlideAppleHelper.makeSpeechTranscriber(locale: locale)
+            let status = await AssetInventory.status(forModules: [transcriber])
+            guard status == .installed else {
+                throw HelperError("Apple Speech model \(modelId) is \(status.description)")
+            }
+
+            if !reservedSpeechModels.contains(modelId) {
+                _ = try await AssetInventory.reserve(locale: locale)
+                reservedSpeechModels.insert(modelId)
+            }
+            speechLocales[modelId] = locale
+            return locale
+        }
+
+        func cleanup(_ request: CleanupRequest) async throws -> String {
+            let key = foundationSessionKey(modelId: request.modelId, systemPrompt: request.systemPrompt)
+            let session = try takeWarmFoundationSession(for: key)
+                ?? makeWarmFoundationSession(modelId: request.modelId, systemPrompt: request.systemPrompt)
+            let response = try await session.respond(
+                to: GlideAppleHelper.cleanupPrompt(request),
+                options: GenerationOptions(
+                    sampling: .greedy,
+                    temperature: 0,
+                    maximumResponseTokens: 512
+                )
+            )
+            Task {
+                self.prepareWarmFoundationSession(
+                    modelId: request.modelId,
+                    systemPrompt: request.systemPrompt
+                )
+            }
+            return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        private func takeWarmFoundationSession(for key: String) -> LanguageModelSession? {
+            guard var sessions = foundationSessions[key], !sessions.isEmpty else {
+                return nil
+            }
+            let session = sessions.removeFirst()
+            foundationSessions[key] = sessions
+            return session
+        }
+
+        private func prepareWarmFoundationSession(modelId: String?, systemPrompt: String) {
+            let key = foundationSessionKey(modelId: modelId, systemPrompt: systemPrompt)
+            if (foundationSessions[key]?.count ?? 0) >= maxWarmFoundationSessionsPerKey {
+                return
+            }
+
+            do {
+                let session = try makeWarmFoundationSession(modelId: modelId, systemPrompt: systemPrompt)
+                foundationSessions[key, default: []].append(session)
+            } catch {
+                fputs("[glide] Apple Foundation prewarm failed: \(error.localizedDescription)\n", stderr)
+            }
+        }
+
+        private func makeWarmFoundationSession(
+            modelId: String?,
+            systemPrompt: String
+        ) throws -> LanguageModelSession {
+            let model = try GlideAppleHelper.foundationLanguageModel(for: modelId)
+            let session = LanguageModelSession(model: model, instructions: systemPrompt)
+            session.prewarm()
+            return session
+        }
+
+        private func foundationSessionKey(modelId: String?, systemPrompt: String) -> String {
+            "\(modelId ?? appleFoundationDefaultModelId)\u{1F}\(systemPrompt)"
+        }
+    }
+
     private static func transcribe(_ request: TranscribeRequest) async throws -> String {
         guard #available(macOS 26.0, *) else {
             throw HelperError("Apple Speech locale models require macOS 26 or newer")
         }
 
-        try requireSignedHelper("Apple Speech")
-
-        let auth = await speechAuthorization()
-        guard auth == .authorized else {
-            throw HelperError("Speech recognition permission is not authorized")
-        }
-
-        let modelId = request.modelId ?? "\(appleSpeechModelPrefix)\(Locale.current.identifier)"
-        let locale = try await locale(forModelId: modelId)
-        let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
-        let status = await AssetInventory.status(forModules: [transcriber])
-        guard status == .installed else {
-            throw HelperError("Apple Speech model \(modelId) is \(status.description)")
-        }
-
-        _ = try await AssetInventory.reserve(locale: locale)
-
-        let audioURL = URL(fileURLWithPath: request.audioPath)
-        let audioFile = try AVAudioFile(forReading: audioURL)
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-        let resultTask = Task {
-            var parts: [String] = []
-            for try await result in transcriber.results {
-                if result.isFinal {
-                    let text = String(result.text.characters)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !text.isEmpty {
-                        parts.append(text)
-                    }
-                }
-            }
-            return parts.joined(separator: " ")
-        }
-
-        try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
-        let text = try await resultTask.value
-        guard !text.isEmpty else {
-            throw HelperError("Apple Speech returned an empty transcript")
-        }
-        return text
+        let runtime = Runtime()
+        return try await runtime.transcribe(request)
     }
 
     private static let foundationModelDefs = [
@@ -399,18 +543,8 @@ struct GlideAppleHelper {
             throw HelperError("Apple Foundation Models require macOS 26 or newer")
         }
 
-        _ = try foundationLanguageModel(for: request.modelId)
-
-        let session = LanguageModelSession(instructions: request.systemPrompt)
-        let response = try await session.respond(
-            to: cleanupPrompt(request),
-            options: GenerationOptions(
-                sampling: .greedy,
-                temperature: 0,
-                maximumResponseTokens: 512
-            )
-        )
-        return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let runtime = Runtime()
+        return try await runtime.cleanup(request)
     }
 
     private static func cleanupPrompt(_ request: CleanupRequest) -> String {
@@ -491,6 +625,19 @@ struct GlideAppleHelper {
         throw HelperError("No Apple Speech model found for \(modelId)")
     }
 
+    @available(macOS 26.0, *)
+    private static func makeSpeechTranscriber(locale: Locale) -> SpeechTranscriber {
+        let transcriptionOptions = Set<SpeechTranscriber.TranscriptionOption>()
+        let reportingOptions: Set<SpeechTranscriber.ReportingOption> = [.fastResults]
+        let attributeOptions = Set<SpeechTranscriber.ResultAttributeOption>()
+        return SpeechTranscriber(
+            locale: locale,
+            transcriptionOptions: transcriptionOptions,
+            reportingOptions: reportingOptions,
+            attributeOptions: attributeOptions
+        )
+    }
+
     private static func modelId(for locale: Locale) -> String {
         "\(appleSpeechModelPrefix)\(locale.identifier)"
     }
@@ -556,14 +703,40 @@ struct GlideAppleHelper {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    private struct ServeEnvelope {
+        var command: String
+        var requestData: Data
+    }
+
+    private static func decodeServeEnvelope(_ line: String) throws -> ServeEnvelope {
+        let data = Data(line.utf8)
+        guard
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let command = object["command"] as? String,
+            !command.isEmpty
+        else {
+            throw HelperError("invalid helper request envelope")
+        }
+
+        let request = object["request"] ?? [:]
+        let requestData = try JSONSerialization.data(withJSONObject: request)
+        return ServeEnvelope(command: command, requestData: requestData)
+    }
+
+    private static func decodeServeRequest<T: Decodable>(_ data: Data) throws -> T {
+        try JSONDecoder().decode(T.self, from: data)
+    }
+
     private static func printResponse(_ response: HelperResponse) {
         do {
             let data = try JSONEncoder().encode(response)
             if let text = String(data: data, encoding: .utf8) {
                 print(text)
+                fflush(stdout)
             }
         } catch {
             print("{\"ok\":false,\"error\":\"failed to encode helper response\"}")
+            fflush(stdout)
         }
     }
 

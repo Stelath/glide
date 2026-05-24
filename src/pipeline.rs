@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use anyhow::{Context, Result};
 
 use crate::{
@@ -35,11 +37,16 @@ fn apply_replacements(text: &str, replacements: &[ReplacementRule]) -> String {
     result
 }
 
+fn elapsed_ms(started: Instant) -> u128 {
+    started.elapsed().as_millis()
+}
+
 pub async fn process_recording(
     shared: SharedState,
     audio: RecordedAudio,
     target_app: Option<String>,
 ) -> Result<()> {
+    let pipeline_started = Instant::now();
     let config = shared.config();
     shared.set_status(
         RuntimeStatus::Processing,
@@ -70,6 +77,7 @@ pub async fn process_recording(
         Some(config.dictionary.vocabulary.join(", "))
     };
 
+    let stt_build_started = Instant::now();
     let stt_provider = stt::build_provider(
         stt_sel.provider,
         &stt_sel.model,
@@ -77,10 +85,17 @@ pub async fn process_recording(
         vocab_prompt,
     )
     .context("failed to build STT provider")?;
+    let stt_name = stt_provider.name();
+    eprintln!(
+        "[glide] STT: provider ready in {} ms",
+        elapsed_ms(stt_build_started)
+    );
+
+    let stt_started = Instant::now();
     let raw_text = stt_provider
         .transcribe(&audio.bytes, audio.format)
         .await
-        .with_context(|| format!("{} transcription failed", stt_provider.name()))?;
+        .with_context(|| format!("{stt_name} transcription failed"))?;
 
     anyhow::ensure!(
         !raw_text.trim().is_empty(),
@@ -88,7 +103,11 @@ pub async fn process_recording(
     );
 
     let raw_text = apply_replacements(&raw_text, &config.dictionary.replacements);
-    eprintln!("[glide] STT: got transcript ({} chars)", raw_text.len());
+    eprintln!(
+        "[glide] STT: got transcript ({} chars) in {} ms",
+        raw_text.len(),
+        elapsed_ms(stt_started)
+    );
 
     // Resolve effective LLM settings
     let llm_sel = matched_style
@@ -103,9 +122,16 @@ pub async fn process_recording(
             "[glide] LLM: cleaning up via {:?} / {}...",
             llm.provider, llm.model
         );
+        let llm_build_started = Instant::now();
         let llm_provider =
             llm::build_provider(llm.provider, &llm.model, system_prompt, &config.providers)
                 .context("failed to build LLM provider")?;
+        let llm_name = llm_provider.name();
+        eprintln!(
+            "[glide] LLM: provider ready in {} ms",
+            elapsed_ms(llm_build_started)
+        );
+        let llm_started = Instant::now();
         llm_provider
             .clean(
                 &raw_text,
@@ -115,7 +141,15 @@ pub async fn process_recording(
                 },
             )
             .await
-            .with_context(|| format!("{} cleanup failed", llm_provider.name()))?
+            .with_context(|| format!("{llm_name} cleanup failed"))
+            .map(|text| {
+                eprintln!(
+                    "[glide] LLM: cleanup returned {} chars in {} ms",
+                    text.len(),
+                    elapsed_ms(llm_started)
+                );
+                text
+            })?
     } else {
         eprintln!("[glide] LLM: disabled, using raw transcript");
         raw_text.clone()
@@ -125,8 +159,17 @@ pub async fn process_recording(
     let cleaned_text = llm::strip_think_tags(&cleaned_text);
 
     eprintln!("[glide] Pasting {} chars", cleaned_text.len());
+    let paste_started = Instant::now();
     paste::paste_text(&cleaned_text, &config.paste).context("failed to paste transcript")?;
+    eprintln!(
+        "[glide] Paste: request returned in {} ms",
+        elapsed_ms(paste_started)
+    );
     shared.set_last_transcript(cleaned_text.clone());
     shared.set_status(RuntimeStatus::Idle, "Ready for dictation");
+    eprintln!(
+        "[glide] Pipeline: completed in {} ms",
+        elapsed_ms(pipeline_started)
+    );
     Ok(())
 }
