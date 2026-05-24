@@ -5,7 +5,9 @@ use crate::{
     config::{Provider, ProvidersConfig},
 };
 
+mod apple;
 mod openai;
+mod parakeet;
 
 #[async_trait::async_trait]
 pub trait SttProvider: Send + Sync {
@@ -27,5 +29,10 @@ pub fn build_provider(
             providers,
             vocabulary_prompt,
         )?)),
+        Provider::AppleLocal => Ok(Box::new(apple::AppleSpeechProvider::new(
+            model,
+            vocabulary_prompt,
+        )?)),
+        Provider::Parakeet => Ok(Box::new(parakeet::ParakeetSttProvider::new(model)?)),
     }
 }

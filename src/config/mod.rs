@@ -7,12 +7,13 @@ pub use macos::{
     main_display_size, notch_dimensions, notch_width, preload_app_icons,
 };
 pub use models::{
-    any_provider_verified, apply_smart_defaults_initial, cached_llm_models,
-    cached_stt_models, fetch_all_models, provider_verified, smart_llm_default, smart_stt_default,
     DictationConfig, DictionaryConfig, ModelInfo, ModelSelection, ReplacementRule, Style,
+    any_provider_verified, apply_smart_defaults_initial, cached_llm_models, cached_stt_models,
+    fetch_all_models, provider_verified, smart_llm_default, smart_stt_default,
 };
 pub use providers::{Provider, ProvidersConfig};
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -30,9 +31,7 @@ pub fn asset_path(relative: &str) -> PathBuf {
             return p.clone();
         }
     }
-    std::env::current_dir()
-        .unwrap_or_default()
-        .join(relative)
+    std::env::current_dir().unwrap_or_default().join(relative)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,8 +65,9 @@ impl Default for GlideConfig {
 impl GlideConfig {
     pub fn load_or_create() -> Result<Self> {
         let mut config: Self = confy::load("glide", "config").unwrap_or_default();
-        config.providers.openai.api_key = load_key_from_keyring("openai");
-        config.providers.groq.api_key = load_key_from_keyring("groq");
+        let api_keys = load_provider_keys_from_keyring();
+        config.providers.openai.api_key = api_keys.get("openai").cloned().unwrap_or_default();
+        config.providers.groq.api_key = api_keys.get("groq").cloned().unwrap_or_default();
         config.validate()?;
         Ok(config)
     }
@@ -78,14 +78,16 @@ impl GlideConfig {
         {
             confy::store("glide", "config", self)
                 .map_err(|e| anyhow::anyhow!("failed to save config: {e}"))?;
-            save_key_to_keyring("openai", &self.providers.openai.api_key);
-            save_key_to_keyring("groq", &self.providers.groq.api_key);
+            save_provider_keys_to_keyring(&provider_keys_from_config(self));
         }
         Ok(())
     }
 
     pub fn validate(&self) -> Result<()> {
-        anyhow::ensure!(self.audio.sample_rate > 0, "audio.sample_rate must be positive");
+        anyhow::ensure!(
+            self.audio.sample_rate > 0,
+            "audio.sample_rate must be positive"
+        );
         anyhow::ensure!(self.audio.channels > 0, "audio.channels must be positive");
         anyhow::ensure!(self.overlay.width > 0, "overlay.width must be positive");
         anyhow::ensure!(self.overlay.height > 0, "overlay.height must be positive");
@@ -313,20 +315,59 @@ impl fmt::Display for HotkeyTrigger {
 
 fn keycode_label(code: u16) -> String {
     match code {
-        0 => "A", 1 => "S", 2 => "D", 3 => "F", 4 => "H", 5 => "G",
-        6 => "Z", 7 => "X", 8 => "C", 9 => "V", 11 => "B", 12 => "Q",
-        13 => "W", 14 => "E", 15 => "R", 16 => "Y", 17 => "T", 31 => "O",
-        32 => "U", 34 => "I", 35 => "P", 36 => "Return", 37 => "L",
-        38 => "J", 40 => "K", 45 => "N", 46 => "M", 49 => "Space",
-        50 => "`", 51 => "Delete", 53 => "Escape",
-        54 => "⌘ Right Cmd", 55 => "⌘ Left Cmd",
-        56 => "⇧ Left Shift", 57 => "⇪ Caps Lock",
-        58 => "⌥ Left Option", 59 => "⌃ Left Ctrl",
-        60 => "⇧ Right Shift", 61 => "⌥ Right Option", 62 => "⌃ Right Ctrl",
+        0 => "A",
+        1 => "S",
+        2 => "D",
+        3 => "F",
+        4 => "H",
+        5 => "G",
+        6 => "Z",
+        7 => "X",
+        8 => "C",
+        9 => "V",
+        11 => "B",
+        12 => "Q",
+        13 => "W",
+        14 => "E",
+        15 => "R",
+        16 => "Y",
+        17 => "T",
+        31 => "O",
+        32 => "U",
+        34 => "I",
+        35 => "P",
+        36 => "Return",
+        37 => "L",
+        38 => "J",
+        40 => "K",
+        45 => "N",
+        46 => "M",
+        49 => "Space",
+        50 => "`",
+        51 => "Delete",
+        53 => "Escape",
+        54 => "⌘ Right Cmd",
+        55 => "⌘ Left Cmd",
+        56 => "⇧ Left Shift",
+        57 => "⇪ Caps Lock",
+        58 => "⌥ Left Option",
+        59 => "⌃ Left Ctrl",
+        60 => "⇧ Right Shift",
+        61 => "⌥ Right Option",
+        62 => "⌃ Right Ctrl",
         63 => "Fn",
-        96 => "F5", 97 => "F6", 98 => "F7", 99 => "F3",
-        100 => "F8", 101 => "F9", 103 => "F11", 109 => "F10",
-        111 => "F12", 118 => "F4", 120 => "F2", 122 => "F1",
+        96 => "F5",
+        97 => "F6",
+        98 => "F7",
+        99 => "F3",
+        100 => "F8",
+        101 => "F9",
+        103 => "F11",
+        109 => "F10",
+        111 => "F12",
+        118 => "F4",
+        120 => "F2",
+        122 => "F1",
         _ => return format!("Key {code}"),
     }
     .to_string()
@@ -446,7 +487,7 @@ impl Default for PasteConfig {
     fn default() -> Self {
         Self {
             restore_clipboard: true,
-            restore_delay_ms: 100,
+            restore_delay_ms: 750,
         }
     }
 }
@@ -455,24 +496,82 @@ impl Default for PasteConfig {
 // Keyring helpers
 // ---------------------------------------------------------------------------
 
-fn load_key_from_keyring(provider: &str) -> String {
-    keyring::Entry::new(&format!("glide-{provider}"), "api-key")
+const KEYRING_SERVICE: &str = "glide";
+const KEYRING_ACCOUNT: &str = "provider-api-keys";
+const REMOTE_PROVIDER_KEY_IDS: [&str; 2] = ["openai", "groq"];
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ProviderKeyringPayload {
+    version: u8,
+    api_keys: BTreeMap<String, String>,
+}
+
+fn provider_keys_from_config(config: &GlideConfig) -> BTreeMap<String, String> {
+    let mut keys = BTreeMap::new();
+    insert_provider_key(&mut keys, "openai", &config.providers.openai.api_key);
+    insert_provider_key(&mut keys, "groq", &config.providers.groq.api_key);
+    keys
+}
+
+fn insert_provider_key(keys: &mut BTreeMap<String, String>, provider: &str, key: &str) {
+    if !key.trim().is_empty() {
+        keys.insert(provider.to_string(), key.to_string());
+    }
+}
+
+fn load_provider_keys_from_keyring() -> BTreeMap<String, String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
         .and_then(|e| e.get_password())
+        .ok()
+        .map(|raw| decode_provider_keys(&raw))
         .unwrap_or_default()
 }
 
-fn save_key_to_keyring(provider: &str, key: &str) {
-    if let Ok(entry) = keyring::Entry::new(&format!("glide-{provider}"), "api-key") {
-        let current = entry.get_password().unwrap_or_default();
-        if current == key {
-            return;
-        }
-        if key.trim().is_empty() {
+#[cfg_attr(test, allow(dead_code))]
+fn save_provider_keys_to_keyring(keys: &BTreeMap<String, String>) {
+    let Some(payload) = encode_provider_keys(keys) else {
+        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
             let _ = entry.delete_credential();
-        } else {
-            let _ = entry.set_password(key);
+        }
+        return;
+    };
+
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
+        let current = entry.get_password().unwrap_or_default();
+        if current != payload {
+            let _ = entry.set_password(&payload);
         }
     }
+}
+
+fn encode_provider_keys(keys: &BTreeMap<String, String>) -> Option<String> {
+    let api_keys = keys
+        .iter()
+        .filter(|(_, key)| !key.trim().is_empty())
+        .map(|(provider, key)| (provider.clone(), key.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    if api_keys.is_empty() {
+        return None;
+    }
+
+    serde_json::to_string(&ProviderKeyringPayload {
+        version: 1,
+        api_keys,
+    })
+    .ok()
+}
+
+fn decode_provider_keys(raw: &str) -> BTreeMap<String, String> {
+    serde_json::from_str::<ProviderKeyringPayload>(raw)
+        .map(|payload| payload.api_keys)
+        .or_else(|_| serde_json::from_str::<BTreeMap<String, String>>(raw))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(provider, key)| {
+            REMOTE_PROVIDER_KEY_IDS.contains(&provider.as_str()) && !key.trim().is_empty()
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -540,6 +639,42 @@ mod tests {
         loaded.validate().unwrap();
         let loaded_raw = toml::to_string_pretty(&loaded).unwrap();
         assert_eq!(raw, loaded_raw);
+    }
+
+    #[test]
+    fn test_provider_key_payload_roundtrip() {
+        let mut config = GlideConfig::default();
+        config.providers.openai.api_key = "openai-key".to_string();
+        config.providers.groq.api_key = "groq-key".to_string();
+
+        let keys = provider_keys_from_config(&config);
+        let payload = encode_provider_keys(&keys).unwrap();
+        let decoded = decode_provider_keys(&payload);
+
+        assert_eq!(decoded.get("openai").unwrap(), "openai-key");
+        assert_eq!(decoded.get("groq").unwrap(), "groq-key");
+    }
+
+    #[test]
+    fn test_provider_key_payload_omits_empty_and_unknown_keys() {
+        let mut keys = BTreeMap::new();
+        keys.insert("openai".to_string(), "openai-key".to_string());
+        keys.insert("groq".to_string(), "  ".to_string());
+        keys.insert("other".to_string(), "other-key".to_string());
+
+        let payload = encode_provider_keys(&keys).unwrap();
+        let decoded = decode_provider_keys(&payload);
+
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded.get("openai").unwrap(), "openai-key");
+    }
+
+    #[test]
+    fn test_provider_key_payload_accepts_plain_map_shape() {
+        let decoded = decode_provider_keys(r#"{"openai":"openai-key","other":"ignored"}"#);
+
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded.get("openai").unwrap(), "openai-key");
     }
 
     #[test]

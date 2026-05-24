@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::config::{Provider, ProvidersConfig};
 
+mod apple;
 mod openai;
 
 #[derive(Debug, Clone, Default)]
@@ -30,5 +31,10 @@ pub fn build_provider(
             system_prompt,
             providers,
         )?)),
+        Provider::AppleLocal => Ok(Box::new(apple::AppleFoundationLlmProvider::new(
+            model,
+            system_prompt,
+        ))),
+        Provider::Parakeet => anyhow::bail!("Parakeet does not provide an LLM cleanup model"),
     }
 }

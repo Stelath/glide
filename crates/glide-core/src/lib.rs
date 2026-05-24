@@ -11,6 +11,7 @@ pub extern "C" fn glide_core_version() -> *const c_char {
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn glide_core_transcribe(
     audio_bytes: *const u8,
     audio_len: u32,
@@ -44,6 +45,7 @@ pub extern "C" fn glide_core_transcribe(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn glide_core_cleanup(
     raw_text: *const c_char,
     config_json: *const c_char,
@@ -69,6 +71,7 @@ pub extern "C" fn glide_core_cleanup(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn glide_core_fetch_models(config_json: *const c_char) -> *mut c_char {
     let result = std::panic::catch_unwind(|| -> Result<models::ModelsResult, String> {
         let config_str = unsafe { ffi::c_str_to_str(config_json) }?;
@@ -90,6 +93,7 @@ pub extern "C" fn glide_core_fetch_models(config_json: *const c_char) -> *mut c_
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn glide_core_free_string(s: *mut c_char) {
     unsafe { ffi::free_c_string(s) }
 }

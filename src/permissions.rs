@@ -1,10 +1,30 @@
 // --- macOS permission checking via FFI ---
+use std::ffi::c_void;
+use std::sync::Once;
 
 // Accessibility: ApplicationServices framework
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
 }
+
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    static kCFBooleanTrue: *const c_void;
+    static kAXTrustedCheckOptionPrompt: *const c_void;
+    fn CFDictionaryCreate(
+        allocator: *const c_void,
+        keys: *const *const c_void,
+        values: *const *const c_void,
+        num_values: isize,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> *const c_void;
+    fn CFRelease(cf: *const c_void);
+}
+
+static ACCESSIBILITY_PROMPT: Once = Once::new();
 
 // Input Monitoring: CoreGraphics framework (macOS 10.15+)
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -15,6 +35,34 @@ unsafe extern "C" {
 /// Check if the app has Accessibility permission (needed for simulated paste via enigo).
 pub fn has_accessibility_access() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// Ask macOS to prompt/register this app in Privacy & Security > Accessibility.
+pub fn request_accessibility_access() -> bool {
+    unsafe {
+        let keys = [kAXTrustedCheckOptionPrompt];
+        let values = [kCFBooleanTrue];
+        let options = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+        if options.is_null() {
+            return AXIsProcessTrusted();
+        }
+        let trusted = AXIsProcessTrustedWithOptions(options);
+        CFRelease(options);
+        trusted
+    }
+}
+
+pub fn request_accessibility_access_once() {
+    ACCESSIBILITY_PROMPT.call_once(|| {
+        let _ = request_accessibility_access();
+    });
 }
 
 /// Check if the app has Input Monitoring permission (needed for global hotkey via CGEventTap).

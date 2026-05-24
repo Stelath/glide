@@ -1,7 +1,7 @@
 use std::ffi::c_void;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::{fs};
 
 use anyhow::{Context as _, Result};
 
@@ -20,7 +20,8 @@ unsafe extern "C" {
 }
 
 type MsgSendPtr = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
-type MsgSendUsize = unsafe extern "C" fn(*mut c_void, *mut c_void, usize, *mut c_void) -> *mut c_void;
+type MsgSendUsize =
+    unsafe extern "C" fn(*mut c_void, *mut c_void, usize, *mut c_void) -> *mut c_void;
 type MsgSendLen = unsafe extern "C" fn(*mut c_void, *mut c_void) -> usize;
 
 #[repr(C)]
@@ -95,7 +96,9 @@ pub fn accent_icon_path(accent: super::ColorAccent) -> Option<PathBuf> {
         (Ok(_), Err(_)) => true,
         _ => false,
     };
-    if (!png_path.exists() || needs_refresh) && extract_icon_file_to_png(&source_path, &png_path).is_err() {
+    if (!png_path.exists() || needs_refresh)
+        && extract_icon_file_to_png(&source_path, &png_path).is_err()
+    {
         return None;
     }
     if png_path.exists() {
@@ -128,7 +131,10 @@ fn extract_icon_to_png(app_name: &str, dest: &Path) -> Result<()> {
         if workspace_class.is_null() {
             anyhow::bail!("NSWorkspace class not found");
         }
-        let workspace = objc_msgSend(workspace_class, sel_registerName(b"sharedWorkspace\0".as_ptr()));
+        let workspace = objc_msgSend(
+            workspace_class,
+            sel_registerName(b"sharedWorkspace\0".as_ptr()),
+        );
         if workspace.is_null() {
             anyhow::bail!("failed to get NSWorkspace");
         }
@@ -145,7 +151,11 @@ fn extract_icon_to_png(app_name: &str, dest: &Path) -> Result<()> {
             anyhow::bail!("failed to create NSString");
         }
 
-        let icon = msg1(workspace, sel_registerName(b"iconForFile:\0".as_ptr()), ns_path);
+        let icon = msg1(
+            workspace,
+            sel_registerName(b"iconForFile:\0".as_ptr()),
+            ns_path,
+        );
         if icon.is_null() {
             anyhow::bail!("failed to get icon");
         }
@@ -172,7 +182,8 @@ fn nsimage_from_path(path: &str) -> Result<*mut c_void> {
             anyhow::bail!("NSString class not found");
         }
         let alloc = objc_msgSend(ns_string_class, sel_registerName(b"alloc\0".as_ptr()));
-        type MsgSendInitString = unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize, usize) -> *mut c_void;
+        type MsgSendInitString =
+            unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize, usize) -> *mut c_void;
         let msg_init_str: MsgSendInitString = std::mem::transmute(objc_msgSend as *const ());
         let ns_path = msg_init_str(
             alloc,
@@ -218,7 +229,11 @@ fn write_nsimage_png(image: *mut c_void, dest: &Path) -> Result<()> {
         if rep_class.is_null() {
             anyhow::bail!("NSBitmapImageRep class not found");
         }
-        let rep = msg1(rep_class, sel_registerName(b"imageRepWithData:\0".as_ptr()), tiff_data);
+        let rep = msg1(
+            rep_class,
+            sel_registerName(b"imageRepWithData:\0".as_ptr()),
+            tiff_data,
+        );
         if rep.is_null() {
             anyhow::bail!("failed to create bitmap rep");
         }
@@ -286,12 +301,18 @@ pub fn frontmost_app_name() -> Option<String> {
         if workspace_class.is_null() {
             return None;
         }
-        let workspace = objc_msgSend(workspace_class, sel_registerName(b"sharedWorkspace\0".as_ptr()));
+        let workspace = objc_msgSend(
+            workspace_class,
+            sel_registerName(b"sharedWorkspace\0".as_ptr()),
+        );
         if workspace.is_null() {
             return None;
         }
 
-        let app = objc_msgSend(workspace, sel_registerName(b"frontmostApplication\0".as_ptr()));
+        let app = objc_msgSend(
+            workspace,
+            sel_registerName(b"frontmostApplication\0".as_ptr()),
+        );
         if app.is_null() {
             return None;
         }
@@ -301,12 +322,18 @@ pub fn frontmost_app_name() -> Option<String> {
             return None;
         }
 
-        let cstr_ptr = msg1(ns_name, sel_registerName(b"UTF8String\0".as_ptr()), std::ptr::null_mut()) as *const i8;
+        let cstr_ptr = msg1(
+            ns_name,
+            sel_registerName(b"UTF8String\0".as_ptr()),
+            std::ptr::null_mut(),
+        ) as *const i8;
         if cstr_ptr.is_null() {
             return None;
         }
 
-        let name = std::ffi::CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned();
+        let name = std::ffi::CStr::from_ptr(cstr_ptr)
+            .to_string_lossy()
+            .into_owned();
         Some(name)
     }
 }
@@ -347,7 +374,10 @@ pub fn notch_width() -> Option<u32> {
 
         let frame = msg_rect(screen, sel_registerName(b"frame\0".as_ptr()));
         let left_area = msg_rect(screen, sel_registerName(b"auxiliaryTopLeftArea\0".as_ptr()));
-        let right_area = msg_rect(screen, sel_registerName(b"auxiliaryTopRightArea\0".as_ptr()));
+        let right_area = msg_rect(
+            screen,
+            sel_registerName(b"auxiliaryTopRightArea\0".as_ptr()),
+        );
 
         if left_area.w == 0.0 && right_area.w == 0.0 {
             return None;
@@ -373,7 +403,10 @@ pub fn notch_dimensions() -> Option<(f64, f64)> {
 
         let frame = msg_rect(screen, sel_registerName(b"frame\0".as_ptr()));
         let left_area = msg_rect(screen, sel_registerName(b"auxiliaryTopLeftArea\0".as_ptr()));
-        let right_area = msg_rect(screen, sel_registerName(b"auxiliaryTopRightArea\0".as_ptr()));
+        let right_area = msg_rect(
+            screen,
+            sel_registerName(b"auxiliaryTopRightArea\0".as_ptr()),
+        );
 
         if left_area.w == 0.0 && right_area.w == 0.0 {
             return None;
@@ -381,7 +414,10 @@ pub fn notch_dimensions() -> Option<(f64, f64)> {
 
         let nw = frame.w - left_area.w - right_area.w;
         let nh = left_area.h;
-        if nw > 0.0 && nh > 0.0 { Some((nw, nh)) } else { None }
+        if nw > 0.0 && nh > 0.0 {
+            Some((nw, nh))
+        } else {
+            None
+        }
     }
 }
-

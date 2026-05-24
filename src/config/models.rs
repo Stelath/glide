@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::GlideConfig;
 use super::providers::{Provider, ProvidersConfig};
+#[cfg(test)]
+use crate::local_models::APPLE_FOUNDATION_MODEL_ID;
+use crate::local_models::LocalModelInstallState;
 
 const DEFAULT_PROMPT: &str = include_str!("prompts/default.md");
 const PROFESSIONAL_PROMPT: &str = include_str!("prompts/professional.md");
@@ -103,13 +106,43 @@ pub struct ReplacementRule {
 #[allow(dead_code)]
 pub struct ModelInfo {
     pub id: String,
+    pub display_name: String,
     pub provider: String,
     pub logo: String,
+    pub local: bool,
+    pub installed: bool,
 }
 
 static CACHED_STT_MODELS: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
 static CACHED_LLM_MODELS: OnceLock<Mutex<Vec<ModelInfo>>> = OnceLock::new();
 pub(crate) static PROVIDER_VERIFIED: OnceLock<Mutex<[bool; 2]>> = OnceLock::new();
+
+fn provider_verified_index(provider: Provider) -> Option<usize> {
+    match provider {
+        Provider::OpenAi => Some(0),
+        Provider::Groq => Some(1),
+        Provider::AppleLocal | Provider::Parakeet => None,
+    }
+}
+
+fn any_remote_provider_verified() -> bool {
+    Provider::REMOTE.into_iter().any(provider_verified)
+}
+
+fn apple_speech_available() -> bool {
+    #[cfg(test)]
+    {
+        crate::local_models::first_installed_apple_speech_model().is_some()
+    }
+    #[cfg(not(test))]
+    {
+        crate::local_models::first_installed_apple_speech_model().is_some()
+    }
+}
+
+fn apple_foundation_available() -> bool {
+    crate::local_models::first_available_apple_foundation_model().is_some()
+}
 
 pub fn provider_verified(provider: Provider) -> bool {
     let cache = PROVIDER_VERIFIED.get_or_init(|| Mutex::new([false; 2]));
@@ -117,11 +150,43 @@ pub fn provider_verified(provider: Provider) -> bool {
     match provider {
         Provider::OpenAi => locked[0],
         Provider::Groq => locked[1],
+        Provider::AppleLocal => apple_speech_available() || apple_foundation_available(),
+        Provider::Parakeet => crate::local_models::parakeet_models_status()
+            .iter()
+            .any(|model| matches!(model.state, LocalModelInstallState::Installed { .. })),
     }
 }
 
 pub fn any_provider_verified() -> bool {
-    provider_verified(Provider::OpenAi) || provider_verified(Provider::Groq)
+    Provider::ALL.into_iter().any(provider_verified)
+}
+
+fn stt_selection_available(selection: &ModelSelection) -> bool {
+    match selection.provider {
+        Provider::OpenAi | Provider::Groq => provider_verified(selection.provider),
+        Provider::AppleLocal => {
+            crate::local_models::resolve_apple_speech_model_id(&selection.model)
+                .map(|model_id| {
+                    crate::local_models::apple_speech_install_state(&model_id)
+                        == crate::local_models::AppleSpeechInstallState::Installed
+                })
+                .unwrap_or(false)
+        }
+        Provider::Parakeet => matches!(
+            crate::local_models::parakeet_install_state(&selection.model),
+            LocalModelInstallState::Installed { .. }
+        ),
+    }
+}
+
+fn llm_selection_available(selection: &ModelSelection) -> bool {
+    match selection.provider {
+        Provider::OpenAi | Provider::Groq => provider_verified(selection.provider),
+        Provider::AppleLocal => {
+            crate::local_models::resolve_apple_foundation_model_id(&selection.model).is_some()
+        }
+        Provider::Parakeet => false,
+    }
 }
 
 pub fn smart_stt_default() -> Option<ModelSelection> {
@@ -134,6 +199,19 @@ pub fn smart_stt_default() -> Option<ModelSelection> {
         Some(ModelSelection {
             provider: Provider::OpenAi,
             model: "whisper-1".to_string(),
+        })
+    } else if let Some(model) = crate::local_models::parakeet_models_status()
+        .into_iter()
+        .find(|model| matches!(model.state, LocalModelInstallState::Installed { .. }))
+    {
+        Some(ModelSelection {
+            provider: Provider::Parakeet,
+            model: model.definition.id.to_string(),
+        })
+    } else if let Some(model) = crate::local_models::first_installed_apple_speech_model() {
+        Some(ModelSelection {
+            provider: Provider::AppleLocal,
+            model: model.definition.id,
         })
     } else {
         None
@@ -151,25 +229,51 @@ pub fn smart_llm_default() -> Option<ModelSelection> {
             provider: Provider::OpenAi,
             model: "gpt-5.4-nano".to_string(),
         })
+    } else if let Some(model) = crate::local_models::first_available_apple_foundation_model() {
+        Some(ModelSelection {
+            provider: Provider::AppleLocal,
+            model: model.id,
+        })
     } else {
         None
     }
 }
 
 pub fn apply_smart_defaults(config: &mut GlideConfig) {
+    resolve_legacy_apple_speech_selections(config);
+
     if !any_provider_verified() {
         return;
     }
 
-    if !provider_verified(config.dictation.stt.provider) {
-        if let Some(smart) = smart_stt_default() {
-            config.dictation.stt = smart;
-        }
+    if !stt_selection_available(&config.dictation.stt)
+        && let Some(smart) = smart_stt_default()
+    {
+        config.dictation.stt = smart;
     }
 
-    if let Some(ref llm) = config.dictation.llm {
-        if !provider_verified(llm.provider) {
-            config.dictation.llm = smart_llm_default();
+    if let Some(ref llm) = config.dictation.llm
+        && !llm_selection_available(llm)
+    {
+        config.dictation.llm = smart_llm_default();
+    }
+}
+
+fn resolve_legacy_apple_speech_selections(config: &mut GlideConfig) {
+    if config.dictation.stt.provider == Provider::AppleLocal
+        && crate::local_models::is_legacy_apple_speech_model(&config.dictation.stt.model)
+        && let Some(model) = crate::local_models::first_installed_apple_speech_model()
+    {
+        config.dictation.stt.model = model.definition.id;
+    }
+
+    for style in &mut config.dictation.styles {
+        if let Some(stt) = &mut style.stt
+            && stt.provider == Provider::AppleLocal
+            && crate::local_models::is_legacy_apple_speech_model(&stt.model)
+            && let Some(model) = crate::local_models::first_installed_apple_speech_model()
+        {
+            stt.model = model.definition.id;
         }
     }
 }
@@ -192,84 +296,92 @@ pub fn apply_smart_defaults_initial(config: &mut GlideConfig) {
 }
 
 fn fallback_stt_models() -> Vec<ModelInfo> {
-    let all = vec![
-        ModelInfo {
-            id: "whisper-1".into(),
-            provider: "OpenAI".into(),
-            logo: "assets/icons/openai.png".into(),
-        },
-        ModelInfo {
-            id: "whisper-large-v3".into(),
-            provider: "Groq".into(),
-            logo: "assets/icons/groq.png".into(),
-        },
-        ModelInfo {
-            id: "whisper-large-v3-turbo".into(),
-            provider: "Groq".into(),
-            logo: "assets/icons/groq.png".into(),
-        },
+    let mut all = vec![
+        model_info(Provider::OpenAi, "whisper-1", false, false),
+        model_info(Provider::Groq, "whisper-large-v3", false, false),
+        model_info(Provider::Groq, "whisper-large-v3-turbo", false, false),
     ];
+    all.extend(apple_speech_model_infos());
+    all.extend(
+        crate::local_models::parakeet_models_status()
+            .into_iter()
+            .filter_map(|status| {
+                let installed = matches!(status.state, LocalModelInstallState::Installed { .. });
+                installed.then(|| model_info(Provider::Parakeet, status.definition.id, true, true))
+            }),
+    );
     filter_models_by_verified_providers(all)
 }
 
 fn fallback_llm_models() -> Vec<ModelInfo> {
     let all = vec![
-        ModelInfo {
-            id: "gpt-5.4-nano".into(),
-            provider: "OpenAI".into(),
-            logo: "assets/icons/openai.png".into(),
-        },
-        ModelInfo {
-            id: "gpt-4o-mini".into(),
-            provider: "OpenAI".into(),
-            logo: "assets/icons/openai.png".into(),
-        },
-        ModelInfo {
-            id: "gpt-4o".into(),
-            provider: "OpenAI".into(),
-            logo: "assets/icons/openai.png".into(),
-        },
-        ModelInfo {
-            id: "gpt-4-turbo".into(),
-            provider: "OpenAI".into(),
-            logo: "assets/icons/openai.png".into(),
-        },
-        ModelInfo {
-            id: "meta-llama/llama-4-scout-17b-16e-instruct".into(),
-            provider: "Groq".into(),
-            logo: "assets/icons/groq.png".into(),
-        },
-        ModelInfo {
-            id: "llama-3.3-70b-versatile".into(),
-            provider: "Groq".into(),
-            logo: "assets/icons/groq.png".into(),
-        },
-        ModelInfo {
-            id: "llama-3.1-8b-instant".into(),
-            provider: "Groq".into(),
-            logo: "assets/icons/groq.png".into(),
-        },
-        ModelInfo {
-            id: "mixtral-8x7b-32768".into(),
-            provider: "Groq".into(),
-            logo: "assets/icons/groq.png".into(),
-        },
+        model_info(Provider::OpenAi, "gpt-5.4-nano", false, false),
+        model_info(Provider::OpenAi, "gpt-4o-mini", false, false),
+        model_info(Provider::OpenAi, "gpt-4o", false, false),
+        model_info(Provider::OpenAi, "gpt-4-turbo", false, false),
+        model_info(
+            Provider::Groq,
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            false,
+            false,
+        ),
+        model_info(Provider::Groq, "llama-3.3-70b-versatile", false, false),
+        model_info(Provider::Groq, "llama-3.1-8b-instant", false, false),
+        model_info(Provider::Groq, "mixtral-8x7b-32768", false, false),
     ];
+    let mut all = all;
+    all.extend(apple_foundation_model_infos());
     filter_models_by_verified_providers(all)
 }
 
 fn filter_models_by_verified_providers(models: Vec<ModelInfo>) -> Vec<ModelInfo> {
-    if !any_provider_verified() {
+    if !any_remote_provider_verified()
+        && !provider_verified(Provider::AppleLocal)
+        && !provider_verified(Provider::Parakeet)
+    {
         return models;
     }
     models
         .into_iter()
         .filter(|m| {
             Provider::from_model_info_provider(&m.provider)
-                .map(provider_verified)
+                .map(|provider| {
+                    if provider.is_local() {
+                        m.installed && provider_verified(provider)
+                    } else {
+                        provider_verified(provider)
+                    }
+                })
                 .unwrap_or(false)
         })
         .collect()
+}
+
+fn model_info(
+    provider: Provider,
+    id: impl Into<String>,
+    local: bool,
+    installed: bool,
+) -> ModelInfo {
+    let id = id.into();
+    model_info_with_display(provider, id.clone(), id, local, installed)
+}
+
+fn model_info_with_display(
+    provider: Provider,
+    id: impl Into<String>,
+    display_name: impl Into<String>,
+    local: bool,
+    installed: bool,
+) -> ModelInfo {
+    ModelInfo {
+        id: id.into(),
+        display_name: display_name.into(),
+        provider: provider.label().into(),
+        logo: provider.logo().into(),
+        local,
+        installed,
+    }
 }
 
 pub fn cached_stt_models() -> Vec<ModelInfo> {
@@ -278,7 +390,9 @@ pub fn cached_stt_models() -> Vec<ModelInfo> {
     if locked.is_empty() {
         fallback_stt_models()
     } else {
-        locked.clone()
+        let mut models = locked.clone();
+        models.extend(local_stt_models());
+        filter_models_by_verified_providers(models)
     }
 }
 
@@ -288,8 +402,88 @@ pub fn cached_llm_models() -> Vec<ModelInfo> {
     if locked.is_empty() {
         fallback_llm_models()
     } else {
-        locked.clone()
+        let mut models = locked.clone();
+        models.extend(local_llm_models());
+        filter_models_by_verified_providers(models)
     }
+}
+
+fn local_stt_models() -> Vec<ModelInfo> {
+    let mut models = Vec::new();
+    models.extend(apple_speech_model_infos());
+    models.extend(
+        crate::local_models::parakeet_models_status()
+            .into_iter()
+            .filter_map(|status| {
+                matches!(status.state, LocalModelInstallState::Installed { .. })
+                    .then(|| model_info(Provider::Parakeet, status.definition.id, true, true))
+            }),
+    );
+    models
+}
+
+fn apple_speech_model_infos() -> Vec<ModelInfo> {
+    crate::local_models::apple_speech_models_status()
+        .into_iter()
+        .filter_map(|status| {
+            (status.state == crate::local_models::AppleSpeechInstallState::Installed).then(|| {
+                model_info_with_display(
+                    Provider::AppleLocal,
+                    status.definition.id,
+                    status.definition.display_name,
+                    true,
+                    true,
+                )
+            })
+        })
+        .collect()
+}
+
+fn local_llm_models() -> Vec<ModelInfo> {
+    apple_foundation_model_infos()
+}
+
+fn apple_foundation_model_infos() -> Vec<ModelInfo> {
+    crate::local_models::apple_foundation_models_status()
+        .into_iter()
+        .filter_map(|model| {
+            model.available.then(|| {
+                model_info_with_display(
+                    Provider::AppleLocal,
+                    model.id,
+                    model.display_name,
+                    true,
+                    true,
+                )
+            })
+        })
+        .collect()
+}
+
+fn excluded_remote_llm_model(provider: Provider, id_lower: &str) -> bool {
+    let excluded_by_family = id_lower.contains("embedding")
+        || id_lower.contains("tts")
+        || id_lower.contains("dall-e")
+        || id_lower.contains("moderation")
+        || id_lower.starts_with("ft:")
+        || id_lower.contains("realtime")
+        || id_lower.contains("-audio-")
+        || id_lower.contains("davinci")
+        || id_lower.contains("babbage")
+        || id_lower.contains("canary")
+        || id_lower.contains("search")
+        || id_lower.contains("similarity")
+        || id_lower.starts_with("text-")
+        || id_lower.starts_with("code-")
+        || id_lower.contains("omni-")
+        || id_lower.contains("orpheus");
+
+    let excluded_openai_generation_model = provider == Provider::OpenAi
+        && (matches!(id_lower, "sora-2" | "sora-2-pro")
+            || id_lower.starts_with("gpt-image")
+            || id_lower.starts_with("gpt-audio"));
+
+    excluded_by_family || excluded_openai_generation_model
 }
 
 #[derive(serde::Deserialize)]
@@ -318,10 +512,7 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
 
         for (provider, creds) in [(Provider::OpenAi, &openai), (Provider::Groq, &groq)] {
             let verified_cache = PROVIDER_VERIFIED.get_or_init(|| Mutex::new([false; 2]));
-            let idx = match provider {
-                Provider::OpenAi => 0,
-                Provider::Groq => 1,
-            };
+            let idx = provider_verified_index(provider).expect("remote provider has an index");
 
             if creds.api_key.trim().is_empty() || creds.base_url.trim().is_empty() {
                 verified_cache.lock().unwrap()[idx] = false;
@@ -350,31 +541,18 @@ pub fn fetch_all_models(providers: &ProvidersConfig) {
                         id_lower.contains("whisper") || id_lower.contains("distil-whisper");
 
                     let info = ModelInfo {
-                        id: entry.id,
+                        id: entry.id.clone(),
+                        display_name: entry.id,
                         provider: label.clone(),
                         logo: logo.clone(),
+                        local: false,
+                        installed: false,
                     };
 
                     if is_stt {
                         stt.push(info);
                     } else {
-                        let excluded = id_lower.contains("embedding")
-                            || id_lower.contains("tts")
-                            || id_lower.contains("dall-e")
-                            || id_lower.contains("moderation")
-                            || id_lower.starts_with("ft:")
-                            || id_lower.contains("realtime")
-                            || id_lower.contains("-audio-")
-                            || id_lower.contains("davinci")
-                            || id_lower.contains("babbage")
-                            || id_lower.contains("canary")
-                            || id_lower.contains("search")
-                            || id_lower.contains("similarity")
-                            || id_lower.starts_with("text-")
-                            || id_lower.starts_with("code-")
-                            || id_lower.contains("omni-")
-                            || id_lower.contains("orpheus");
-                        if !excluded {
+                        if !excluded_remote_llm_model(provider, &id_lower) {
                             llm.push(info);
                         }
                     }
@@ -412,6 +590,7 @@ mod tests {
         match provider {
             Provider::OpenAi => locked[0] = verified,
             Provider::Groq => locked[1] = verified,
+            Provider::AppleLocal | Provider::Parakeet => {}
         }
     }
 
@@ -423,10 +602,13 @@ mod tests {
 
     #[test]
     fn test_provider_variants() {
-        assert_eq!(Provider::ALL.len(), 2);
+        assert_eq!(Provider::ALL.len(), 4);
         assert_eq!(Provider::OpenAi.label(), "OpenAI");
         assert_eq!(Provider::Groq.label(), "Groq");
+        assert_eq!(Provider::AppleLocal.label(), "Apple Intelligence");
+        assert_eq!(Provider::Parakeet.label(), "Parakeet");
         assert!(!Provider::OpenAi.default_base_url().is_empty());
+        assert!(Provider::AppleLocal.default_base_url().is_empty());
     }
 
     #[test]
@@ -447,7 +629,7 @@ mod tests {
     fn test_any_provider_verified_none() {
         let _g = PROVIDER_LOCK.lock().unwrap();
         reset_providers_verified();
-        assert!(!any_provider_verified());
+        assert!(any_provider_verified());
     }
 
     #[test]
@@ -472,7 +654,9 @@ mod tests {
     fn test_smart_stt_default_no_providers() {
         let _g = PROVIDER_LOCK.lock().unwrap();
         reset_providers_verified();
-        assert!(smart_stt_default().is_none());
+        let sel = smart_stt_default().unwrap();
+        assert_eq!(sel.provider, Provider::AppleLocal);
+        assert_eq!(sel.model, "speechanalyzer-en_US");
     }
 
     #[test]
@@ -513,7 +697,9 @@ mod tests {
     fn test_smart_llm_default_no_providers() {
         let _g = PROVIDER_LOCK.lock().unwrap();
         reset_providers_verified();
-        assert!(smart_llm_default().is_none());
+        let sel = smart_llm_default().unwrap();
+        assert_eq!(sel.provider, Provider::AppleLocal);
+        assert_eq!(sel.model, APPLE_FOUNDATION_MODEL_ID);
     }
 
     #[test]
@@ -556,8 +742,8 @@ mod tests {
         reset_providers_verified();
         let mut config = GlideConfig::default();
         apply_smart_defaults(&mut config);
-        assert_eq!(config.dictation.stt.provider, Provider::OpenAi);
-        assert_eq!(config.dictation.stt.model, "whisper-1");
+        assert_eq!(config.dictation.stt.provider, Provider::AppleLocal);
+        assert_eq!(config.dictation.stt.model, "speechanalyzer-en_US");
         assert!(config.dictation.llm.is_none());
     }
 
@@ -678,9 +864,8 @@ mod tests {
         let _g = PROVIDER_LOCK.lock().unwrap();
         reset_providers_verified();
         let models = fallback_stt_models();
-        assert_eq!(models.len(), 3);
-        assert!(models.iter().any(|m| m.provider == "OpenAI"));
-        assert!(models.iter().any(|m| m.provider == "Groq"));
+        assert!(models.iter().all(|m| m.provider == "Apple Intelligence"));
+        assert!(models.iter().any(|m| m.id == "speechanalyzer-en_US"));
     }
 
     #[test]
@@ -689,7 +874,8 @@ mod tests {
         reset_providers_verified();
         set_provider_verified(Provider::Groq, true);
         let models = fallback_stt_models();
-        assert!(models.iter().all(|m| m.provider == "Groq"));
+        assert!(models.iter().any(|m| m.provider == "Groq"));
+        assert!(models.iter().any(|m| m.provider == "Apple Intelligence"));
         assert!(models.iter().any(|m| m.id == "whisper-large-v3-turbo"));
         reset_providers_verified();
     }
@@ -700,8 +886,54 @@ mod tests {
         reset_providers_verified();
         set_provider_verified(Provider::OpenAi, true);
         let models = fallback_llm_models();
-        assert!(models.iter().all(|m| m.provider == "OpenAI"));
+        assert!(models.iter().any(|m| m.provider == "OpenAI"));
+        assert!(models.iter().any(|m| m.provider == "Apple Intelligence"));
         assert!(models.iter().any(|m| m.id == "gpt-5.4-nano"));
+        assert!(models.iter().any(|m| m.id == APPLE_FOUNDATION_MODEL_ID));
         reset_providers_verified();
+    }
+
+    #[test]
+    fn test_openai_generation_models_are_excluded_from_llm_picker() {
+        for id in [
+            "sora-2",
+            "sora-2-pro",
+            "gpt-image-1",
+            "gpt-image-1-mini",
+            "gpt-audio",
+            "gpt-audio-mini",
+        ] {
+            assert!(excluded_remote_llm_model(Provider::OpenAi, id));
+        }
+
+        assert!(!excluded_remote_llm_model(Provider::OpenAi, "gpt-5.4-nano"));
+        assert!(!excluded_remote_llm_model(Provider::Groq, "sora-2"));
+    }
+
+    #[test]
+    fn test_removed_apple_foundation_selection_falls_back_to_default() {
+        let _g = PROVIDER_LOCK.lock().unwrap();
+        reset_providers_verified();
+        let mut config = GlideConfig::default();
+        config.dictation.llm = Some(ModelSelection {
+            provider: Provider::AppleLocal,
+            model: "apple-foundation-rewrite".to_string(),
+        });
+
+        apply_smart_defaults(&mut config);
+
+        let llm = config.dictation.llm.as_ref().unwrap();
+        assert_eq!(llm.provider, Provider::AppleLocal);
+        assert_eq!(llm.model, APPLE_FOUNDATION_MODEL_ID);
+    }
+
+    #[test]
+    fn test_only_default_apple_foundation_model_is_listed() {
+        let _g = PROVIDER_LOCK.lock().unwrap();
+        reset_providers_verified();
+        let models = local_llm_models();
+        assert!(models.iter().any(|m| m.id == APPLE_FOUNDATION_MODEL_ID));
+        assert!(!models.iter().any(|m| m.id == "apple-foundation-rewrite"));
+        assert!(!models.iter().any(|m| m.id == "apple-foundation-summary"));
     }
 }

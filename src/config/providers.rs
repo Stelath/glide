@@ -6,16 +6,21 @@ use serde::{Deserialize, Serialize};
 pub enum Provider {
     OpenAi,
     Groq,
+    AppleLocal,
+    Parakeet,
 }
 
 impl Provider {
     #[allow(dead_code)]
-    pub const ALL: [Self; 2] = [Self::OpenAi, Self::Groq];
+    pub const ALL: [Self; 4] = [Self::OpenAi, Self::Groq, Self::AppleLocal, Self::Parakeet];
+    pub const REMOTE: [Self; 2] = [Self::OpenAi, Self::Groq];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::OpenAi => "OpenAI",
             Self::Groq => "Groq",
+            Self::AppleLocal => "Apple Intelligence",
+            Self::Parakeet => "Parakeet",
         }
     }
 
@@ -23,6 +28,8 @@ impl Provider {
         match self {
             Self::OpenAi => "assets/icons/openai.png",
             Self::Groq => "assets/icons/groq.png",
+            Self::AppleLocal => "assets/icons/apple-intelligence.png",
+            Self::Parakeet => "assets/icons/nvidia.png",
         }
     }
 
@@ -30,7 +37,12 @@ impl Provider {
         match self {
             Self::OpenAi => "https://api.openai.com/v1",
             Self::Groq => "https://api.groq.com/openai/v1",
+            Self::AppleLocal | Self::Parakeet => "",
         }
+    }
+
+    pub fn is_local(self) -> bool {
+        matches!(self, Self::AppleLocal | Self::Parakeet)
     }
 
     pub fn stt_endpoint(self, base: &str) -> String {
@@ -45,6 +57,8 @@ impl Provider {
         match s {
             "OpenAI" => Some(Self::OpenAi),
             "Groq" => Some(Self::Groq),
+            "Apple Local" | "Apple Intelligence" => Some(Self::AppleLocal),
+            "Parakeet" => Some(Self::Parakeet),
             _ => None,
         }
     }
@@ -77,6 +91,9 @@ impl ProvidersConfig {
         match provider {
             Provider::OpenAi => &self.openai,
             Provider::Groq => &self.groq,
+            Provider::AppleLocal | Provider::Parakeet => {
+                panic!("local providers do not use API credentials")
+            }
         }
     }
 }

@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Glide needs microphone access for speech-to-text dictation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Glide uses Apple Speech for local on-device dictation when selected.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Glide needs accessibility access to paste transcribed text into other applications.</string>
 </dict>

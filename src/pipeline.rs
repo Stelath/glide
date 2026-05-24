@@ -92,9 +92,13 @@ pub async fn process_recording(
         Some(config.dictionary.vocabulary.join(", "))
     };
 
-    let stt_provider =
-        stt::build_provider(stt_sel.provider, &stt_sel.model, &config.providers, vocab_prompt)
-            .context("failed to build STT provider")?;
+    let stt_provider = stt::build_provider(
+        stt_sel.provider,
+        &stt_sel.model,
+        &config.providers,
+        vocab_prompt,
+    )
+    .context("failed to build STT provider")?;
     let raw_text = stt_provider
         .transcribe(&audio.bytes, audio.format)
         .await

@@ -7,6 +7,9 @@ use crate::config::PasteConfig;
 
 // --- CoreGraphics FFI for keyboard event simulation ---
 
+const CLIPBOARD_SETTLE_DELAY_MS: u64 = 50;
+const MIN_RESTORE_DELAY_MS: u64 = 750;
+
 type CGEventRef = *mut std::ffi::c_void;
 type CGEventSourceRef = *mut std::ffi::c_void;
 
@@ -48,6 +51,10 @@ fn simulate_paste() {
     }
 }
 
+fn restore_delay(config: &PasteConfig) -> Duration {
+    Duration::from_millis(config.restore_delay_ms.max(MIN_RESTORE_DELAY_MS))
+}
+
 pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
     anyhow::ensure!(
         crate::permissions::has_accessibility_access(),
@@ -66,10 +73,11 @@ pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
         .set_text(text.to_string())
         .context("failed to update clipboard")?;
 
+    thread::sleep(Duration::from_millis(CLIPBOARD_SETTLE_DELAY_MS));
     simulate_paste();
 
     if let Some(previous_text) = previous_text {
-        thread::sleep(Duration::from_millis(config.restore_delay_ms));
+        thread::sleep(restore_delay(config));
         let mut clipboard = Clipboard::new().context("failed to re-open clipboard")?;
         clipboard
             .set_text(previous_text)
@@ -77,4 +85,32 @@ pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_delay_preserves_safe_custom_delay() {
+        let config = PasteConfig {
+            restore_clipboard: true,
+            restore_delay_ms: 1_000,
+        };
+
+        assert_eq!(restore_delay(&config), Duration::from_millis(1_000));
+    }
+
+    #[test]
+    fn restore_delay_clamps_unsafe_short_delay() {
+        let config = PasteConfig {
+            restore_clipboard: true,
+            restore_delay_ms: 100,
+        };
+
+        assert_eq!(
+            restore_delay(&config),
+            Duration::from_millis(MIN_RESTORE_DELAY_MS)
+        );
+    }
 }

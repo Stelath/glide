@@ -31,21 +31,12 @@ _dev-mac:
 
 [private]
 _build-mac:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Building Glide (release)..."
-    cargo build --release
-    echo "Packaging Glide.app..."
-    APP="{{ROOT}}/target/release/Glide.app"
-    rm -rf "$APP"
-    mkdir -p "$APP/Contents/MacOS"
-    mkdir -p "$APP/Contents/Resources/assets/icons"
-    cp "{{ROOT}}/target/release/Glide" "$APP/Contents/MacOS/Glide"
-    cp "{{ROOT}}/Info.plist" "$APP/Contents/Info.plist"
-    cp "{{ROOT}}/assets/icons/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-    cp "{{ROOT}}/assets/icons/"*.png "$APP/Contents/Resources/assets/icons/" 2>/dev/null || true
-    cp "{{ROOT}}/assets/icons/"*.svg "$APP/Contents/Resources/assets/icons/" 2>/dev/null || true
-    echo "Done: $APP"
+    {{ROOT}}/bundle.sh
+
+# Debug app bundle, requiring a valid Apple code-signing identity.
+dev-signed:
+    {{ROOT}}/bundle.sh --debug --sign
+    open {{ROOT}}/target/debug/Glide.app
 
 # ─── iOS ──────────────────────────────────────────────────────────────────────
 

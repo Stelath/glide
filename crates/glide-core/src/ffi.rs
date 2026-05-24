@@ -39,7 +39,9 @@ mod tests {
     fn json_helpers_round_trip() {
         let ptr = json_ok("hello");
         let value = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
-        assert_eq!(value, r#"{"data":"hello","ok":true}"#);
+        let parsed: serde_json::Value = serde_json::from_str(&value).unwrap();
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["data"], "hello");
         unsafe { free_c_string(ptr) };
     }
 }

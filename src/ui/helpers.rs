@@ -158,6 +158,22 @@ pub(super) fn display_model_name(id: &str) -> &str {
     id.rsplit_once('/').map(|(_, name)| name).unwrap_or(id)
 }
 
+pub(super) fn model_display_name(model: &crate::config::ModelInfo) -> String {
+    if model.display_name.trim().is_empty() {
+        display_model_name(&model.id).to_string()
+    } else {
+        model.display_name.clone()
+    }
+}
+
+pub(super) fn model_label_for(id: &str, models: &[crate::config::ModelInfo]) -> String {
+    models
+        .iter()
+        .find(|model| model.id == id)
+        .map(model_display_name)
+        .unwrap_or_else(|| display_model_name(id).to_string())
+}
+
 pub(super) fn model_picker_item(
     model: &crate::config::ModelInfo,
     recommended: bool,
@@ -185,7 +201,7 @@ pub(super) fn model_picker_item(
                 .flex_1()
                 .text_sm()
                 .text_color(cx.theme().foreground)
-                .child(display_model_name(&model.id).to_string()),
+                .child(model_display_name(model)),
         );
     if recommended {
         row = row.child(
@@ -210,6 +226,7 @@ pub(super) fn model_dropdown_button(
         .iter()
         .find(|m| m.id == current_model)
         .map(|m| m.logo.clone());
+    let current_display = model_label_for(current_model, models);
     let models = models.to_vec();
     let recommended = recommended_model.map(|s| s.to_string());
 
@@ -223,7 +240,7 @@ pub(super) fn model_dropdown_button(
             div()
                 .truncate()
                 .max_w(gpui::px(180.0))
-                .child(display_model_name(current_model).to_string()),
+                .child(current_display),
         );
 
     let popover = Popover::new(popover_id)
@@ -237,8 +254,10 @@ pub(super) fn model_dropdown_button(
                 let mut scored: Vec<_> = models
                     .iter()
                     .filter_map(|m| {
-                        let display = display_model_name(&m.id);
-                        crate::config::fuzzy_match(&query, display).map(|s| (m, s))
+                        let display = model_display_name(m);
+                        let id_score = crate::config::fuzzy_match(&query, &m.id);
+                        let display_score = crate::config::fuzzy_match(&query, &display);
+                        id_score.or(display_score).map(|s| (m, s))
                     })
                     .collect();
                 scored.sort_by(|a, b| b.1.cmp(&a.1));
@@ -327,7 +346,7 @@ pub(super) fn style_model_dropdown(
     };
     let current_logo = models
         .iter()
-        .find(|m| m.id == raw_model)
+        .find(|m| m.id == raw_model || m.display_name == raw_model)
         .map(|m| m.logo.clone());
     let models = models.to_vec();
 
@@ -355,8 +374,10 @@ pub(super) fn style_model_dropdown(
                 let mut scored: Vec<_> = models
                     .iter()
                     .filter_map(|m| {
-                        let display = display_model_name(&m.id);
-                        crate::config::fuzzy_match(&query, display).map(|s| (m, s))
+                        let display = model_display_name(m);
+                        let id_score = crate::config::fuzzy_match(&query, &m.id);
+                        let display_score = crate::config::fuzzy_match(&query, &display);
+                        id_score.or(display_score).map(|s| (m, s))
                     })
                     .collect();
                 scored.sort_by(|a, b| b.1.cmp(&a.1));

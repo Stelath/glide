@@ -697,8 +697,7 @@ pub(super) fn create_notch_glow_panel(
             let msg_set_cg_rect2: MsgSendSetCGRect2 =
                 std::mem::transmute(objc_msgSend as *const ());
             type MsgSendSetCGPoint2 = unsafe extern "C" fn(*mut c_void, *mut c_void, f64, f64);
-            let msg_set_point2: MsgSendSetCGPoint2 =
-                std::mem::transmute(objc_msgSend as *const ());
+            let msg_set_point2: MsgSendSetCGPoint2 = std::mem::transmute(objc_msgSend as *const ());
             type MsgSendPtrPtr2 = unsafe extern "C" fn(
                 *mut c_void,
                 *mut c_void,
@@ -891,8 +890,7 @@ pub(super) fn create_notch_glow_panel(
                     objc_msgSend(c, cg_color_sel)
                 })
                 .collect();
-            let shadow_anim =
-                msg_ptr(ca_kf_class, anim_kp_sel, nsstring_cstr(b"shadowColor\0"));
+            let shadow_anim = msg_ptr(ca_kf_class, anim_kp_sel, nsstring_cstr(b"shadowColor\0"));
             let bright_arr = msg_array(
                 ns_array_class,
                 arr_sel,

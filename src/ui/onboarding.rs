@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, img, px, SharedString, Window};
-use gpui_component::button::{Button, ButtonVariants};
+use gpui::{SharedString, Window, div, img, px};
 use gpui_component::ActiveTheme;
 use gpui_component::Disableable;
 use gpui_component::Sizable;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{Icon, IconName};
 
 use crate::config::HotkeyTrigger;
@@ -19,7 +19,10 @@ use crate::permissions;
 fn hotkey_presets() -> [(HotkeyTrigger, &'static str); 4] {
     [
         // keycode 61 = Right Option only (HotkeyTrigger::Option would match both L+R)
-        (HotkeyTrigger::Custom(61), "\u{2325} Right Option (recommended)"),
+        (
+            HotkeyTrigger::Custom(61),
+            "\u{2325} Right Option (recommended)",
+        ),
         (HotkeyTrigger::CommandRight, "\u{2318} Right Command"),
         (HotkeyTrigger::Custom(63), "Fn"),
         (HotkeyTrigger::F8, "F8"),
@@ -81,7 +84,12 @@ pub(super) enum OnboardingStep {
 }
 
 impl OnboardingStep {
-    const ALL: [Self; 4] = [Self::Welcome, Self::Permissions, Self::Hotkey, Self::HowItWorks];
+    const ALL: [Self; 4] = [
+        Self::Welcome,
+        Self::Permissions,
+        Self::Hotkey,
+        Self::HowItWorks,
+    ];
 
     fn index(self) -> usize {
         match self {
@@ -341,9 +349,7 @@ impl SettingsApp {
                     .compact()
                     .primary()
                     .on_click(move |_, _, _cx| {
-                        let _ = std::process::Command::new("open")
-                            .arg(&url_owned)
-                            .spawn();
+                        let _ = std::process::Command::new("open").arg(&url_owned).spawn();
                     })
                     .into_any_element()
             };
@@ -461,8 +467,7 @@ impl SettingsApp {
                             .bg(cx.theme().primary.opacity(0.08))
                     })
                     .when(!is_selected, |d| {
-                        d.border_color(cx.theme().border)
-                            .bg(cx.theme().muted)
+                        d.border_color(cx.theme().border).bg(cx.theme().muted)
                     })
                     .child(
                         div()
@@ -487,7 +492,10 @@ impl SettingsApp {
         }
 
         // Custom key recording
-        let is_custom = matches!(self.onboarding_selected_trigger, Some(HotkeyTrigger::Custom(_)));
+        let is_custom = matches!(
+            self.onboarding_selected_trigger,
+            Some(HotkeyTrigger::Custom(_))
+        );
         let custom_label = if self.onboarding_recording_custom {
             "Press any key\u{2026}".to_string()
         } else if is_custom {
@@ -593,8 +601,16 @@ impl SettingsApp {
             .unwrap_or_else(|| "your hotkey".to_string());
 
         let steps: [(&str, String, &str); 3] = [
-            ("1", format!("Hold {trigger_label}"), "Start speaking naturally"),
-            ("2", "Speak".to_string(), "Glide captures and transcribes your voice"),
+            (
+                "1",
+                format!("Hold {trigger_label}"),
+                "Start speaking naturally",
+            ),
+            (
+                "2",
+                "Speak".to_string(),
+                "Glide captures and transcribes your voice",
+            ),
             (
                 "3",
                 format!("Release {trigger_label}"),

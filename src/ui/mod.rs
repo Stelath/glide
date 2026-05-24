@@ -60,6 +60,7 @@ pub(crate) struct StyleInputs {
     name: Entity<InputState>,
     apps: Vec<String>,
     prompt: Entity<InputState>,
+    prompt_expanded: bool,
     search: Entity<InputState>,
     stt_model_search: Entity<InputState>,
     llm_model_search: Entity<InputState>,
@@ -75,6 +76,7 @@ pub struct SettingsApp {
     openai_inputs: ProviderInputs,
     groq_inputs: ProviderInputs,
     expanded_provider: Option<usize>,
+    apple_speech_search: Entity<InputState>,
     expanded_style: Option<usize>,
     prompt_expanded: bool,
 
@@ -136,6 +138,7 @@ impl SettingsApp {
         });
         let default_stt_search = cx.new(|cx| InputState::new(window, cx));
         let default_llm_search = cx.new(|cx| InputState::new(window, cx));
+        let apple_speech_search = cx.new(|cx| InputState::new(window, cx));
         let vocabulary_input = cx.new(|cx| InputState::new(window, cx));
         let replacement_find_input = cx.new(|cx| InputState::new(window, cx));
         let replacement_replace_input = cx.new(|cx| InputState::new(window, cx));
@@ -189,9 +192,7 @@ impl SettingsApp {
         if show_onboarding {
             cx.spawn(async move |this, cx| {
                 loop {
-                    cx.background_executor()
-                        .timer(Duration::from_secs(2))
-                        .await;
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
                     let ok = this.update(cx, |view, cx| {
                         if !view.show_onboarding {
                             return false; // stop polling
@@ -230,6 +231,7 @@ impl SettingsApp {
                 base_url: groq_base_url,
             },
             expanded_provider: Some(0),
+            apple_speech_search,
             expanded_style: Some(0),
             prompt_expanded: false,
             default_prompt,
@@ -274,6 +276,7 @@ impl SettingsApp {
                 name,
                 apps: entry.apps.clone(),
                 prompt,
+                prompt_expanded: false,
                 search,
                 stt_model_search,
                 llm_model_search,
@@ -345,15 +348,17 @@ impl SettingsApp {
 
         config.dictation.system_prompt = self.default_prompt.read(cx).value().to_string();
 
+        let existing_styles = config.dictation.styles.clone();
         config.dictation.styles = self
             .styles
             .iter()
+            .enumerate()
             .map(|s| Style {
-                name: s.name.read(cx).value().to_string(),
-                apps: s.apps.clone(),
-                prompt: s.prompt.read(cx).value().to_string(),
-                stt: None,
-                llm: None,
+                name: s.1.name.read(cx).value().to_string(),
+                apps: s.1.apps.clone(),
+                prompt: s.1.prompt.read(cx).value().to_string(),
+                stt: existing_styles.get(s.0).and_then(|style| style.stt.clone()),
+                llm: existing_styles.get(s.0).and_then(|style| style.llm.clone()),
             })
             .collect();
 
@@ -431,9 +436,9 @@ impl SettingsApp {
                 SettingsPane::General => self
                     .render_general_pane(window, cx, &snapshot)
                     .into_any_element(),
-                SettingsPane::Dictionary => self
-                    .render_dictionary_pane(window, cx)
-                    .into_any_element(),
+                SettingsPane::Dictionary => {
+                    self.render_dictionary_pane(window, cx).into_any_element()
+                }
             })
     }
 }
@@ -445,7 +450,9 @@ impl Render for SettingsApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         if self.show_onboarding {
-            return self.render_onboarding_overlay(window, cx).into_any_element();
+            return self
+                .render_onboarding_overlay(window, cx)
+                .into_any_element();
         }
 
         let snapshot = self.shared.snapshot();

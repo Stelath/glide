@@ -1,8 +1,10 @@
 mod app;
+mod apple_helper;
 mod audio;
 mod config;
 mod hotkey;
 mod llm;
+mod local_models;
 mod overlay;
 mod paste;
 mod permissions;
@@ -13,10 +15,9 @@ mod ui;
 use std::sync::Arc;
 
 use gpui::{
-    actions, div, img, size, px, AnyWindowHandle, App, AppContext, Application, Bounds, Context,
-    Global, IntoElement, KeyBinding, Menu, MenuItem, OsAction, ParentElement, Render,
-    Styled, SystemMenuType, Window, WindowBounds, WindowOptions,
-    point,
+    AnyWindowHandle, App, AppContext, Application, Bounds, Context, Global, IntoElement,
+    KeyBinding, Menu, MenuItem, OsAction, ParentElement, Render, Styled, SystemMenuType, Window,
+    WindowBounds, WindowOptions, actions, div, img, point, px, size,
 };
 use gpui_component::{ActiveTheme, Root};
 use tokio::runtime::Runtime;
@@ -25,7 +26,20 @@ use crate::{app::SharedAppState, config::GlideConfig};
 
 actions!(
     glide,
-    [Quit, CloseWindow, ShowSettings, ShowAbout, Minimize, Zoom, Undo, Redo, Cut, Copy, Paste, SelectAll]
+    [
+        Quit,
+        CloseWindow,
+        ShowSettings,
+        ShowAbout,
+        Minimize,
+        Zoom,
+        Undo,
+        Redo,
+        Cut,
+        Copy,
+        Paste,
+        SelectAll
+    ]
 );
 
 /// Tracks the settings window so we can reopen/close it specifically.
@@ -35,12 +49,14 @@ struct SettingsWindowState {
 }
 impl Global for SettingsWindowState {}
 
-
 fn ensure_settings_window(cx: &mut App) {
     let state = cx.global_mut::<SettingsWindowState>();
     // If the handle is still valid, just activate it
     if let Some(handle) = state.handle {
-        if handle.update(cx, |_, window, _| window.activate_window()).is_ok() {
+        if handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+        {
             return;
         }
     }
@@ -49,10 +65,7 @@ fn ensure_settings_window(cx: &mut App) {
     let shared_for_view = shared.clone();
     let handle = cx.open_window(
         WindowOptions {
-            window_bounds: Some(WindowBounds::centered(
-                size(px(1000.0), px(650.0)),
-                cx,
-            )),
+            window_bounds: Some(WindowBounds::centered(size(px(1000.0), px(650.0)), cx)),
             window_min_size: Some(size(px(700.0), px(450.0))),
             ..Default::default()
         },
@@ -72,7 +85,12 @@ struct AboutView;
 
 impl Render for AboutView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let accent = cx.global::<SettingsWindowState>().shared.config().app.accent;
+        let accent = cx
+            .global::<SettingsWindowState>()
+            .shared
+            .config()
+            .app
+            .accent;
         let icon_path = crate::config::accent_icon_path(accent)
             .unwrap_or_else(|| crate::config::asset_path("assets/icons/logo.svg"));
         div()
@@ -83,11 +101,7 @@ impl Render for AboutView {
             .size_full()
             .bg(cx.theme().background)
             .gap(px(12.0))
-            .child(
-                img(icon_path)
-                    .w(px(80.0))
-                    .h(px(80.0)),
-            )
+            .child(img(icon_path).w(px(80.0)).h(px(80.0)))
             .child(
                 div()
                     .text_sm()
@@ -125,6 +139,8 @@ fn open_about_window(cx: &mut App) {
 }
 
 fn main() {
+    permissions::request_accessibility_access_once();
+
     let config = GlideConfig::load_or_create().expect("failed to load config");
     let shared = Arc::new(SharedAppState::new(config));
     shared.refresh_input_devices();
@@ -204,9 +220,7 @@ fn main() {
             },
             Menu {
                 name: "File".into(),
-                items: vec![
-                    MenuItem::action("Close Window", CloseWindow),
-                ],
+                items: vec![MenuItem::action("Close Window", CloseWindow)],
             },
             Menu {
                 name: "Edit".into(),

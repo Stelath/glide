@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{SharedString, div, img};
+use gpui::{Animation, AnimationExt as _, SharedString, div, img, percentage};
 use gpui_component::ActiveTheme;
 use gpui_component::Sizable;
 use gpui_component::button::{Button, ButtonVariants};
@@ -19,6 +19,582 @@ use super::helpers::*;
 use super::{ProviderInputs, SettingsApp, apply_theme_preference};
 use crate::config::Provider;
 
+fn animated_loader(id: SharedString) -> impl IntoElement {
+    Icon::new(IconName::Loader).xsmall().with_animation(
+        id,
+        Animation::new(Duration::from_millis(900)).repeat(),
+        |icon, delta| icon.rotate(percentage(delta)),
+    )
+}
+
+fn local_model_row(
+    label: &str,
+    detail: &str,
+    available: bool,
+    reason: &str,
+    cx: &mut gpui::Context<SettingsApp>,
+) -> gpui::Div {
+    let status = if available {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .flex_shrink_0()
+            .child(
+                Icon::new(IconName::Check)
+                    .xsmall()
+                    .text_color(gpui::rgb(0x22C55E)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Available"),
+            )
+            .into_any_element()
+    } else {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .flex_shrink_0()
+            .child(
+                Icon::new(IconName::CircleX)
+                    .xsmall()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .child(
+                div()
+                    .max_w(gpui::px(220.0))
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .truncate()
+                    .child(reason.to_string()),
+            )
+            .into_any_element()
+    };
+
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().border)
+        .bg(cx.theme().secondary)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(cx.theme().foreground)
+                        .truncate()
+                        .child(label.to_string()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .truncate()
+                        .child(detail.to_string()),
+                ),
+        )
+        .child(status)
+}
+
+fn apple_speech_progress_label(progress: Option<f64>) -> String {
+    progress
+        .map(|progress| format!("{:.0}%", (progress * 100.0).clamp(0.0, 100.0)))
+        .unwrap_or_else(|| "Preparing".to_string())
+}
+
+fn apple_speech_model_row(
+    status: crate::local_models::AppleSpeechModelStatus,
+    show_not_installed: bool,
+    entity: gpui::WeakEntity<SettingsApp>,
+    cx: &mut gpui::App,
+) -> Option<gpui::Div> {
+    let model_id = status.definition.id.clone();
+    let detail = if status.definition.locale_id.is_empty() {
+        status.definition.asset_status.clone()
+    } else {
+        format!(
+            "{} · {}",
+            status.definition.locale_id, status.definition.asset_status
+        )
+    };
+
+    let action = match status.state.clone() {
+        crate::local_models::AppleSpeechInstallState::NotInstalled => {
+            if !show_not_installed {
+                return None;
+            }
+            let model_id = model_id.clone();
+            let entity = entity.clone();
+            Button::new(SharedString::from(format!("download-apple-{model_id}")))
+                .label("Download")
+                .icon(IconName::ArrowDown)
+                .small()
+                .compact()
+                .on_click(move |_, _, cx| {
+                    let _ = crate::local_models::start_apple_speech_model_download(&model_id);
+                    let _ = entity.update(cx, |_this, cx| {
+                        poll_apple_speech_downloads(cx);
+                        cx.notify();
+                    });
+                })
+                .into_any_element()
+        }
+        crate::local_models::AppleSpeechInstallState::Downloading { progress } => div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(animated_loader(SharedString::from(format!(
+                "apple-download-spinner-{model_id}"
+            ))))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(apple_speech_progress_label(progress)),
+            )
+            .into_any_element(),
+        crate::local_models::AppleSpeechInstallState::Cancelling => div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(animated_loader(SharedString::from(format!(
+                "apple-cancel-spinner-{model_id}"
+            ))))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Cancelling..."),
+            )
+            .into_any_element(),
+        crate::local_models::AppleSpeechInstallState::Installed => {
+            let model_id = model_id.clone();
+            let entity = entity.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Installed"),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("delete-apple-{model_id}")))
+                        .icon(IconName::Close)
+                        .small()
+                        .compact()
+                        .ghost()
+                        .tooltip("Delete locale")
+                        .on_click(move |_, _, cx| {
+                            let _ = crate::local_models::release_apple_speech_model(&model_id);
+                            let deleted_model = model_id.clone();
+                            let _ = entity.update(cx, |this, cx| {
+                                let _ = this.shared.update_config(|config| {
+                                    if config.dictation.stt.provider == Provider::AppleLocal
+                                        && config.dictation.stt.model == deleted_model
+                                        && let Some(default) = crate::config::smart_stt_default()
+                                    {
+                                        config.dictation.stt = default;
+                                    }
+                                    for style in &mut config.dictation.styles {
+                                        if style
+                                            .stt
+                                            .as_ref()
+                                            .map(|selection| {
+                                                selection.provider == Provider::AppleLocal
+                                                    && selection.model == deleted_model
+                                            })
+                                            .unwrap_or(false)
+                                        {
+                                            style.stt = None;
+                                        }
+                                    }
+                                });
+                                cx.notify();
+                            });
+                        }),
+                )
+                .into_any_element()
+        }
+        crate::local_models::AppleSpeechInstallState::Failed(error) => {
+            let model_id = model_id.clone();
+            let entity = entity.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .max_w(gpui::px(220.0))
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(error),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("retry-apple-{model_id}")))
+                        .label("Retry")
+                        .small()
+                        .compact()
+                        .on_click(move |_, _, cx| {
+                            let _ =
+                                crate::local_models::start_apple_speech_model_download(&model_id);
+                            let _ = entity.update(cx, |_this, cx| {
+                                poll_apple_speech_downloads(cx);
+                                cx.notify();
+                            });
+                        }),
+                )
+                .into_any_element()
+        }
+    };
+
+    Some(
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().secondary)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(cx.theme().foreground)
+                            .truncate()
+                            .child(status.definition.display_name),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .truncate()
+                            .child(detail),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .flex_shrink_0()
+                    .child(action),
+            ),
+    )
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParakeetRowActionKind {
+    Download,
+    Cancel,
+    None,
+    Delete,
+    Retry,
+}
+
+#[cfg(test)]
+fn parakeet_row_action_kind(
+    state: &crate::local_models::LocalModelInstallState,
+) -> ParakeetRowActionKind {
+    match state {
+        crate::local_models::LocalModelInstallState::NotInstalled => {
+            ParakeetRowActionKind::Download
+        }
+        crate::local_models::LocalModelInstallState::Downloading { .. } => {
+            ParakeetRowActionKind::Cancel
+        }
+        crate::local_models::LocalModelInstallState::Cancelling { .. } => {
+            ParakeetRowActionKind::None
+        }
+        crate::local_models::LocalModelInstallState::Installed { .. } => {
+            ParakeetRowActionKind::Delete
+        }
+        crate::local_models::LocalModelInstallState::Failed(_) => ParakeetRowActionKind::Retry,
+    }
+}
+
+fn parakeet_model_row(
+    status: crate::local_models::ParakeetModelStatus,
+    cx: &mut gpui::Context<SettingsApp>,
+) -> gpui::Div {
+    let model_id = status.definition.id.to_string();
+    let state = status.state.clone();
+    let action = match state {
+        crate::local_models::LocalModelInstallState::NotInstalled => {
+            let model_id = model_id.clone();
+            Button::new(SharedString::from(format!("download-{model_id}")))
+                .label("Download")
+                .icon(IconName::ArrowDown)
+                .small()
+                .compact()
+                .on_click(cx.listener(move |_this, _, _window, cx| {
+                    let _ = crate::local_models::start_parakeet_download(&model_id);
+                    poll_parakeet_downloads(cx);
+                    cx.notify();
+                }))
+                .into_any_element()
+        }
+        crate::local_models::LocalModelInstallState::Downloading {
+            downloaded_bytes,
+            total_bytes,
+        } => {
+            let cancel_model_id = model_id.clone();
+            let label = if let Some(total) = total_bytes {
+                format!(
+                    "{} / {}",
+                    format_bytes(downloaded_bytes),
+                    format_bytes(total)
+                )
+            } else {
+                format!("{} downloaded", format_bytes(downloaded_bytes))
+            };
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(animated_loader(SharedString::from(format!(
+                    "download-spinner-{model_id}"
+                ))))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(label),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("cancel-{model_id}")))
+                        .icon(IconName::Close)
+                        .small()
+                        .compact()
+                        .ghost()
+                        .tooltip("Cancel download")
+                        .on_click(cx.listener(move |_this, _, _window, cx| {
+                            let _ = crate::local_models::cancel_parakeet_download(&cancel_model_id);
+                            poll_parakeet_downloads(cx);
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        }
+        crate::local_models::LocalModelInstallState::Cancelling { .. } => div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(animated_loader(SharedString::from(format!(
+                "cancel-spinner-{model_id}"
+            ))))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Cancelling..."),
+            )
+            .into_any_element(),
+        crate::local_models::LocalModelInstallState::Installed { size_bytes } => {
+            let model_id = model_id.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format_bytes(size_bytes)),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("delete-{model_id}")))
+                        .icon(IconName::Close)
+                        .small()
+                        .compact()
+                        .danger()
+                        .tooltip("Delete model")
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            let _ = crate::local_models::delete_parakeet_model(&model_id);
+                            let deleted_model = model_id.clone();
+                            let _ = this.shared.update_config(|config| {
+                                if config.dictation.stt.provider == Provider::Parakeet
+                                    && config.dictation.stt.model == deleted_model
+                                    && let Some(default) = crate::config::smart_stt_default()
+                                {
+                                    config.dictation.stt = default;
+                                }
+                                for style in &mut config.dictation.styles {
+                                    if style
+                                        .stt
+                                        .as_ref()
+                                        .map(|selection| {
+                                            selection.provider == Provider::Parakeet
+                                                && selection.model == deleted_model
+                                        })
+                                        .unwrap_or(false)
+                                    {
+                                        style.stt = None;
+                                    }
+                                }
+                            });
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        }
+        crate::local_models::LocalModelInstallState::Failed(error) => {
+            let model_id = model_id.clone();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .max_w(gpui::px(220.0))
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(error),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("retry-{model_id}")))
+                        .label("Retry")
+                        .small()
+                        .compact()
+                        .on_click(cx.listener(move |_this, _, _window, cx| {
+                            let _ = crate::local_models::start_parakeet_download(&model_id);
+                            poll_parakeet_downloads(cx);
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        }
+    };
+
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().border)
+        .bg(cx.theme().secondary)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(cx.theme().foreground)
+                        .truncate()
+                        .child(status.definition.label.to_string()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .truncate()
+                        .child(status.definition.language.to_string()),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_end()
+                .flex_shrink_0()
+                .child(action),
+        )
+}
+
+fn poll_parakeet_downloads(cx: &mut gpui::Context<SettingsApp>) {
+    cx.spawn(async move |this, cx| {
+        loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(750))
+                .await;
+            let downloading = crate::local_models::parakeet_models_status()
+                .iter()
+                .any(|status| {
+                    matches!(
+                        status.state,
+                        crate::local_models::LocalModelInstallState::Downloading { .. }
+                            | crate::local_models::LocalModelInstallState::Cancelling { .. }
+                    )
+                });
+            let _ = this.update(cx, |_this, cx| cx.notify());
+            if !downloading {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
+fn poll_apple_speech_downloads(cx: &mut gpui::Context<SettingsApp>) {
+    cx.spawn(async move |this, cx| {
+        loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(750))
+                .await;
+            let downloading = crate::local_models::apple_speech_has_active_downloads();
+            let _ = this.update(cx, |_this, cx| cx.notify());
+            if !downloading {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.1} GB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.0} MB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.0} KB", bytes / KIB)
+    } else {
+        format!("{bytes:.0} B")
+    }
+}
+
 impl SettingsApp {
     pub(super) fn render_providers_pane(
         &self,
@@ -28,12 +604,12 @@ impl SettingsApp {
     ) -> impl IntoElement {
         let mut container = div().flex().flex_col().gap_2();
 
-        let providers: [(Provider, &ProviderInputs); 2] = [
+        let remote_providers: [(Provider, &ProviderInputs); 2] = [
             (Provider::OpenAi, &self.openai_inputs),
             (Provider::Groq, &self.groq_inputs),
         ];
 
-        for (idx, (provider, inputs)) in providers.iter().enumerate() {
+        for (idx, (provider, inputs)) in remote_providers.iter().enumerate() {
             let is_expanded = self.expanded_provider == Some(idx);
             let logo_path = Some(crate::config::asset_path(provider.logo()));
 
@@ -121,7 +697,441 @@ impl SettingsApp {
             );
         }
 
+        container = container
+            .child(self.render_apple_local_provider_card(cx, 2))
+            .child(self.render_parakeet_provider_card(cx, 3));
+
         container
+    }
+
+    fn render_apple_local_provider_card(
+        &self,
+        cx: &mut gpui::Context<Self>,
+        idx: usize,
+    ) -> impl IntoElement {
+        let provider = Provider::AppleLocal;
+        let is_expanded = self.expanded_provider == Some(idx);
+        let caps = crate::apple_helper::cached_capabilities();
+        let speech_statuses = crate::local_models::apple_speech_models_status();
+        let foundation_statuses = crate::local_models::apple_foundation_models_status();
+        let active_count = speech_statuses
+            .iter()
+            .filter(|status| {
+                matches!(
+                    status.state,
+                    crate::local_models::AppleSpeechInstallState::Downloading { .. }
+                        | crate::local_models::AppleSpeechInstallState::Cancelling
+                )
+            })
+            .count();
+        let header_status = if active_count > 0 {
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(animated_loader(SharedString::from(
+                        "apple-header-download-spinner",
+                    )))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("{active_count} downloading")),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+        let chevron = if is_expanded { "▼" } else { "▶" };
+
+        let header = div()
+            .id(SharedString::from(format!("provider-header-{idx}")))
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_4()
+            .py_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().secondary)
+            .cursor_pointer()
+            .hover(|s| s.bg(cx.theme().accent.opacity(0.1)))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(chevron),
+            )
+            .child(
+                img(crate::config::asset_path(provider.logo()))
+                    .w(gpui::px(24.0))
+                    .h(gpui::px(24.0))
+                    .rounded_md(),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(cx.theme().foreground)
+                    .child(provider.label()),
+            )
+            .child(div().flex_1())
+            .when_some(header_status, |this, header_status| {
+                this.child(header_status)
+            })
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                if this.expanded_provider != Some(idx) {
+                    crate::local_models::refresh_apple_local_models();
+                }
+                this.expanded_provider = if this.expanded_provider == Some(idx) {
+                    None
+                } else {
+                    Some(idx)
+                };
+                cx.notify();
+            }));
+
+        let body = is_expanded.then(|| {
+            let add_popover_statuses = speech_statuses.clone();
+            let speech_unavailable_reason =
+                crate::local_models::apple_speech_models_unavailable_reason();
+            let add_search = self.apple_speech_search.clone();
+            let settings_entity = cx.weak_entity();
+            let popover_entity = settings_entity.clone();
+            let popover_empty_message = speech_unavailable_reason
+                .clone()
+                .unwrap_or_else(|| "No speech locales found".to_string());
+            let add_popover = Popover::new("apple-speech-model-picker")
+                .trigger(
+                    Button::new("add-apple-speech-model")
+                        .icon(IconName::Plus)
+                        .small()
+                        .compact(),
+                )
+                .content(move |_state, _window, cx| {
+                    let query = add_search.read(cx).value().to_string();
+                    let mut filtered: Vec<_> = if query.trim().is_empty() {
+                        add_popover_statuses.clone()
+                    } else {
+                        let mut scored: Vec<_> = add_popover_statuses
+                            .iter()
+                            .filter_map(|status| {
+                                let label = &status.definition.display_name;
+                                let locale = &status.definition.locale_id;
+                                let label_score = crate::config::fuzzy_match(&query, label);
+                                let locale_score = crate::config::fuzzy_match(&query, locale);
+                                label_score
+                                    .or(locale_score)
+                                    .map(|score| (status.clone(), score))
+                            })
+                            .collect();
+                        scored.sort_by(|a, b| b.1.cmp(&a.1));
+                        scored.into_iter().map(|(status, _)| status).collect()
+                    };
+                    if query.trim().is_empty() {
+                        filtered.sort_by(|a, b| {
+                            a.definition.display_name.cmp(&b.definition.display_name)
+                        });
+                    }
+
+                    let mut list = div().flex().flex_col().gap_1().p_1();
+                    let filtered_count = filtered.len();
+                    for status in filtered {
+                        if let Some(row) =
+                            apple_speech_model_row(status, true, popover_entity.clone(), cx)
+                        {
+                            list = list.child(row);
+                        }
+                    }
+                    if filtered_count == 0 {
+                        list = list.child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(popover_empty_message.clone()),
+                        );
+                    }
+
+                    div()
+                        .w(gpui::px(440.0))
+                        .max_h(gpui::px(420.0))
+                        .flex()
+                        .flex_col()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .p_2()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(Input::new(&add_search).prefix(IconName::Search)),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from("apple-speech-model-scroll"))
+                                .flex_1()
+                                .overflow_y_scroll()
+                                .child(list),
+                        )
+                        .into_any_element()
+                });
+
+            let mut speech_rows = div().flex().flex_col().gap_2();
+            let mut visible_count = 0usize;
+            for status in speech_statuses {
+                if let Some(row) =
+                    apple_speech_model_row(status, false, settings_entity.clone(), cx)
+                {
+                    visible_count += 1;
+                    speech_rows = speech_rows.child(row);
+                }
+            }
+            if visible_count == 0 {
+                let empty_message = if let Some(reason) = speech_unavailable_reason {
+                    reason
+                } else if caps.apple_speech_available {
+                    "No speech locales installed".to_string()
+                } else {
+                    caps.apple_speech_reason.clone()
+                };
+                speech_rows = speech_rows.child(
+                    div()
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(empty_message),
+                );
+            }
+
+            let mut foundation_rows = div().flex().flex_col().gap_2();
+            if foundation_statuses.is_empty() {
+                foundation_rows = foundation_rows.child(local_model_row(
+                    "Apple Foundation Model",
+                    "SystemLanguageModel.default",
+                    false,
+                    &caps.foundation_models_reason,
+                    cx,
+                ));
+            } else {
+                for status in foundation_statuses {
+                    foundation_rows = foundation_rows.child(local_model_row(
+                        &status.display_name,
+                        &status.model_name,
+                        status.available,
+                        &status.reason,
+                        cx,
+                    ));
+                }
+            }
+
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .ml_4()
+                .border_l_2()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(cx.theme().foreground)
+                        .child("Foundation Models"),
+                )
+                .child(foundation_rows)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .pt_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(cx.theme().foreground)
+                                .child("Speech Locales"),
+                        )
+                        .child(div().flex_1())
+                        .child(add_popover),
+                )
+                .child(speech_rows)
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .when_some(body, |this, body| this.child(body))
+    }
+
+    fn render_parakeet_provider_card(
+        &self,
+        cx: &mut gpui::Context<Self>,
+        idx: usize,
+    ) -> impl IntoElement {
+        let provider = Provider::Parakeet;
+        let is_expanded = self.expanded_provider == Some(idx);
+        let statuses = crate::local_models::parakeet_models_status();
+        let installed_count = statuses
+            .iter()
+            .filter(|status| {
+                matches!(
+                    status.state,
+                    crate::local_models::LocalModelInstallState::Installed { .. }
+                )
+            })
+            .count();
+        let downloading_count = statuses
+            .iter()
+            .filter(|status| {
+                matches!(
+                    status.state,
+                    crate::local_models::LocalModelInstallState::Downloading { .. }
+                )
+            })
+            .count();
+        let cancelling_count = statuses
+            .iter()
+            .filter(|status| {
+                matches!(
+                    status.state,
+                    crate::local_models::LocalModelInstallState::Cancelling { .. }
+                )
+            })
+            .count();
+        let header_status = if installed_count > 0 {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Check)
+                        .xsmall()
+                        .text_color(gpui::rgb(0x22C55E)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{installed_count} installed")),
+                )
+                .into_any_element()
+        } else if cancelling_count > 0 {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(animated_loader(SharedString::from(
+                    "parakeet-header-cancelling-spinner",
+                )))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{cancelling_count} cancelling")),
+                )
+                .into_any_element()
+        } else if downloading_count > 0 {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(animated_loader(SharedString::from(
+                    "parakeet-header-download-spinner",
+                )))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{downloading_count} downloading")),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(format!("{} available", statuses.len()))
+                .into_any_element()
+        };
+        let chevron = if is_expanded { "▼" } else { "▶" };
+
+        let header = div()
+            .id(SharedString::from(format!("provider-header-{idx}")))
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_4()
+            .py_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().secondary)
+            .cursor_pointer()
+            .hover(|s| s.bg(cx.theme().accent.opacity(0.1)))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(chevron),
+            )
+            .child(
+                img(crate::config::asset_path(provider.logo()))
+                    .w(gpui::px(24.0))
+                    .h(gpui::px(24.0))
+                    .rounded_md(),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(cx.theme().foreground)
+                    .child(provider.label()),
+            )
+            .child(div().flex_1())
+            .child(header_status)
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                this.expanded_provider = if this.expanded_provider == Some(idx) {
+                    None
+                } else {
+                    Some(idx)
+                };
+                cx.notify();
+            }));
+
+        let body = is_expanded.then(|| {
+            let mut rows = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .ml_4()
+                .border_l_2()
+                .border_color(cx.theme().border);
+
+            for status in statuses {
+                rows = rows.child(parakeet_model_row(status, cx));
+            }
+            rows
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .when_some(body, |this, body| this.child(body))
     }
 
     pub(super) fn render_styles_pane(
@@ -231,70 +1241,72 @@ impl SettingsApp {
 
         // -- Styles (accordion cards) --
         for (index, style) in self.styles.iter().enumerate() {
-            let style_name = style.name.read(cx).value().to_string();
-            let display_name = if style_name.is_empty() {
-                format!("Style #{}", index + 1)
-            } else {
-                style_name.clone()
-            };
             let is_expanded = self.expanded_style == Some(index);
+            let style_prompt_expanded = style.prompt_expanded;
+            let name_input = Input::new(&style.name)
+                .appearance(false)
+                .bordered(false)
+                .focus_bordered(false)
+                .small();
 
-            let chevron = if is_expanded { "▼" } else { "▶" };
             let header = div()
                 .id(SharedString::from(format!("style-header-{index}")))
                 .flex()
                 .items_center()
                 .justify_between()
+                .gap_2()
                 .px_4()
                 .py_3()
                 .rounded_lg()
                 .border_1()
                 .border_color(cx.theme().border)
                 .bg(cx.theme().secondary)
-                .cursor_pointer()
                 .hover(|s| s.bg(cx.theme().accent.opacity(0.1)))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap_2()
+                        .flex_1()
+                        .min_w_0()
                         .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(chevron),
+                            Button::new(SharedString::from(format!("toggle-style-{index}")))
+                                .icon(if is_expanded {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                })
+                                .ghost()
+                                .xsmall()
+                                .compact()
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.expanded_style = if this.expanded_style == Some(index) {
+                                        None
+                                    } else {
+                                        Some(index)
+                                    };
+                                    cx.notify();
+                                })),
                         )
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(cx.theme().foreground)
-                                .child(display_name),
-                        ),
+                        .child(div().flex_1().min_w_0().child(name_input)),
                 )
                 .child(
                     Button::new(SharedString::from(format!("remove-style-{index}")))
-                        .label("×")
+                        .icon(IconName::Close)
                         .ghost()
                         .small()
                         .compact()
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.styles.remove(index);
-                            if this.expanded_style == Some(index) {
-                                this.expanded_style = None;
-                            }
+                            this.expanded_style = match this.expanded_style {
+                                Some(current) if current == index => None,
+                                Some(current) if current > index => Some(current - 1),
+                                current => current,
+                            };
                             this.schedule_autosave(cx);
                             cx.notify();
                         })),
-                )
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    this.expanded_style = if this.expanded_style == Some(index) {
-                        None
-                    } else {
-                        Some(index)
-                    };
-                    cx.notify();
-                }));
+                );
 
             let body = if is_expanded {
                 let apps = &style.apps;
@@ -482,19 +1494,44 @@ impl SettingsApp {
                                 .into_any_element()
                         });
 
-                let name_input = Input::new(&style.name).appearance(false);
+                let style_prompt_chevron = if style_prompt_expanded { "▼" } else { "▶" };
+                let style_prompt_header = div()
+                    .id(SharedString::from(format!(
+                        "style-prompt-accordion-{index}"
+                    )))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(style_prompt_chevron),
+                    )
+                    .child(field_label("System Prompt", cx))
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        if let Some(style) = this.styles.get_mut(index) {
+                            style.prompt_expanded = !style.prompt_expanded;
+                        }
+                        cx.notify();
+                    }));
 
                 let cfg_styles = &snapshot.config.dictation.styles;
                 let stt_display = cfg_styles
                     .get(index)
                     .and_then(|s| s.stt.as_ref())
-                    .map(|sel| display_model_name(&sel.model).to_string())
-                    .unwrap_or_else(|| format!("Default ({})", display_model_name(&default_stt)));
+                    .map(|sel| model_label_for(&sel.model, &stt_models))
+                    .unwrap_or_else(|| {
+                        format!("Default ({})", model_label_for(&default_stt, &stt_models))
+                    });
                 let llm_display = cfg_styles
                     .get(index)
                     .and_then(|s| s.llm.as_ref())
-                    .map(|sel| display_model_name(&sel.model).to_string())
-                    .unwrap_or_else(|| format!("Default ({})", display_model_name(&default_llm)));
+                    .map(|sel| model_label_for(&sel.model, &llm_models))
+                    .unwrap_or_else(|| {
+                        format!("Default ({})", model_label_for(&default_llm, &llm_models))
+                    });
 
                 Some(
                     div()
@@ -506,7 +1543,6 @@ impl SettingsApp {
                         .ml_4()
                         .border_l_2()
                         .border_color(cx.theme().border)
-                        .child(name_input)
                         .child(
                             div()
                                 .flex()
@@ -515,7 +1551,16 @@ impl SettingsApp {
                                 .child(app_row)
                                 .child(add_app_popover),
                         )
-                        .child(Input::new(&style.prompt))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(style_prompt_header)
+                                .when(style_prompt_expanded, |this| {
+                                    this.child(Input::new(&style.prompt))
+                                }),
+                        )
                         .child(
                             div()
                                 .flex()
@@ -1056,11 +2101,7 @@ impl SettingsApp {
                         .border_1()
                         .border_color(cx.theme().border)
                         .text_xs()
-                        .child(
-                            div()
-                                .text_color(cx.theme().foreground)
-                                .child(word.clone()),
-                        )
+                        .child(div().text_color(cx.theme().foreground).child(word.clone()))
                         .child(
                             Button::new(SharedString::from(format!("rm-vocab-{i}")))
                                 .label("×")
@@ -1224,12 +2265,7 @@ impl SettingsApp {
                         .small()
                         .compact()
                         .on_click(cx.listener(move |_this, _, window, cx| {
-                            let find = find_entity
-                                .read(cx)
-                                .value()
-                                .to_string()
-                                .trim()
-                                .to_string();
+                            let find = find_entity.read(cx).value().to_string().trim().to_string();
                             let replace = replace_entity
                                 .read(cx)
                                 .value()
@@ -1279,5 +2315,37 @@ impl SettingsApp {
         container = container.child(section_block("Replacements", cx).child(repl_card));
 
         container
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::local_models::LocalModelInstallState;
+
+    #[test]
+    fn parakeet_row_x_action_cancels_download_or_deletes_installed_model() {
+        assert_eq!(
+            parakeet_row_action_kind(&LocalModelInstallState::Downloading {
+                downloaded_bytes: 512,
+                total_bytes: Some(1024),
+            }),
+            ParakeetRowActionKind::Cancel
+        );
+        assert_eq!(
+            parakeet_row_action_kind(&LocalModelInstallState::Installed { size_bytes: 4096 }),
+            ParakeetRowActionKind::Delete
+        );
+    }
+
+    #[test]
+    fn parakeet_row_has_no_x_action_while_cancelling() {
+        assert_eq!(
+            parakeet_row_action_kind(&LocalModelInstallState::Cancelling {
+                downloaded_bytes: 512,
+                total_bytes: Some(1024),
+            }),
+            ParakeetRowActionKind::None
+        );
     }
 }
