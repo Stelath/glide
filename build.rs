@@ -32,7 +32,7 @@ fn main() {
   <key>CFBundleExecutable</key>
   <string>GlideAppleHelper</string>
   <key>CFBundleIdentifier</key>
-  <string>com.glide.app.apple-helper</string>
+  <string>com.ghenti.glide.mac.apple-helper</string>
   <key>CFBundleName</key>
   <string>Glide Apple Helper</string>
   <key>CFBundlePackageType</key>
@@ -97,11 +97,13 @@ fn maybe_codesign_helper(helper: &Path) {
     let status = Command::new("codesign")
         .args([
             "--force",
-            "--timestamp=none",
+            "--timestamp",
+            "--options",
+            "runtime",
             "--sign",
             &identity,
             "--identifier",
-            "com.glide.app.apple-helper",
+            "com.ghenti.glide.mac.apple-helper",
             helper.to_str().unwrap(),
         ])
         .status()

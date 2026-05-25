@@ -93,7 +93,7 @@ if [[ -n "$HELPER" ]]; then
   <key>CFBundleExecutable</key>
   <string>GlideAppleHelper</string>
   <key>CFBundleIdentifier</key>
-  <string>com.glide.app.apple-helper</string>
+  <string>com.ghenti.glide.mac.apple-helper</string>
   <key>CFBundleName</key>
   <string>Glide Apple Helper</string>
   <key>CFBundlePackageType</key>
@@ -121,12 +121,12 @@ if [[ "$SIGN_MODE" != "never" ]]; then
     if [[ -n "$IDENTITY" ]]; then
         echo "Signing Glide.app with: $IDENTITY"
         if [[ -f "$HELPER_APP/Contents/MacOS/GlideAppleHelper" ]]; then
-            codesign --force --timestamp=none --sign "$IDENTITY" "$HELPER_APP"
+            codesign --force --timestamp --options runtime --sign "$IDENTITY" "$HELPER_APP"
         fi
-        codesign --force --timestamp=none --sign "$IDENTITY" \
-            --identifier com.glide.app \
+        codesign --force --timestamp --options runtime --sign "$IDENTITY" \
+            --identifier com.ghenti.glide.mac \
             "$APP/Contents/MacOS/Glide"
-        codesign --force --timestamp=none --sign "$IDENTITY" "$APP"
+        codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP"
     elif [[ -n "$TEAM_ID" ]]; then
         echo "Signing skipped: no valid code-signing identity found for Apple team $TEAM_ID." >&2
         echo "Apple Speech locale assets require a signed helper." >&2
