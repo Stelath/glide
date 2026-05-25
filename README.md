@@ -27,9 +27,9 @@
 
 ## 📖 Overview
 
-**Glide** is a lightweight, ultra-fast macOS dictation app built with Rust and [GPUI](https://github.com/zed-industries/zed) (the GPU-accelerated UI framework powering the Zed editor). 
+**Glide** is a lightweight, ultra-fast macOS (Windows & Linux coming soon) dictation app built with Rust and [GPUI](https://github.com/zed-industries/zed) (the GPU-accelerated UI framework powering the Zed editor). 
 
-Unlike standard dictation utilities, Glide provides a real-time audio spectrum visualizer overlay that sits elegantly at the top of your screen, letting you see exactly how your voice is being captured. It integrates with both **local, privacy-respecting speech-to-text engines** and **high-performance cloud endpoints**, and uses LLM-powered context-aware **Styles** to automatically format, rewrite, or polish your transcriptions on the fly.
+Unlike standard dictation utilities, Glide stays lightweight and provides minimal overlays that sit elegantly at the top of your screen. It integrates with both **local, privacy-respecting speech-to-text engines** and **high-performance cloud endpoints**, and uses LLM-powered context-aware **Styles** to automatically format, rewrite, or polish your transcriptions on the fly.
 
 ---
 
@@ -37,10 +37,10 @@ Unlike standard dictation utilities, Glide provides a real-time audio spectrum v
 
 <p align="center">
   <kbd>
-    <img src="assets/screenshots/glide-general.png" alt="Glide Interface and Spectrum Overlay" width="800">
+    <img src="assets/screenshots/glide-general.png" alt="Glide general settings" width="800">
   </kbd>
   <br>
-  <em>Real-time audio visualizer overlay sitting natively at the top of your screen.</em>
+  <em>Simple, non-cluttered general settings</em>
 </p>
 
 <br>
@@ -52,14 +52,14 @@ Unlike standard dictation utilities, Glide provides a real-time audio spectrum v
         <img src="assets/screenshots/glide-providers.png" alt="Speech-to-Text and LLM Provider Settings" width="100%">
       </kbd>
       <br>
-      <strong>Flexible Cloud & Local Providers Setup</strong>
+      <strong>Cloud & Local Models</strong>
     </td>
     <td width="50%" align="center">
       <kbd>
-        <img src="assets/screenshots/glide-styles.png" alt="Custom Post-Processing Rewrite Styles" width="100%">
+        <img src="assets/screenshots/glide-styles.png" alt="Custom Rewrite Styles" width="100%">
       </kbd>
       <br>
-      <strong>Context-Aware Rewriting Styles</strong>
+      <strong>App-aware Writing Styles</strong>
     </td>
   </tr>
 </table>
@@ -71,22 +71,17 @@ Unlike standard dictation utilities, Glide provides a real-time audio spectrum v
 - 🎙️ **Hybrid Speech-To-Text (STT) Engines**:
   - **Local & Offline**: Use Apple Speech (via a native macOS helper) or Nvidia Parakeet models (via Sherpa-ONNX) for private, zero-latency dictation.
   - **Cloud APIs**: Support for OpenAI Whisper, Groq, and Cerebras endpoints.
-- 🎛️ **Spectrum Analyzer Overlay**:
-  - Dynamic overlay featuring real-time FFT audio visualizer EQ bars.
-  - Custom visual states including active dictation bars, loading dots, and notch-adjacent glowing glows.
-  - Adjustable size, position, and opacity.
 - 🧠 **Context-Aware Styles & Rewrites**:
   - Post-process your transcripts using local or cloud language models (LLMs).
   - Create app-specific rules (e.g., auto-applying a "Coding" formatting style when typing in VS Code, or a "Messaging" casual style in Slack/Discord).
   - Supports custom prompts, formatting, grammar correction, and shorthand expansion.
-- 🔒 **macOS Integration & Security**:
-  - System Keychain integration to securely store API credentials.
+- 🔒 **Integration & Security**:
+  - System Keychain integration to securely store API credentials (we don't store in plaintext).
   - Global hotkeys (customizable "Hold to Talk" or "Toggle" dictation).
-  - Native clipboard pasting using macOS CoreGraphics FFI for seamless insertion.
   - Launch at login option.
 - 🎨 **Visual Themes & Accents**:
   - System, Light, and Dark mode preferences.
-  - Curated color accents: Slate, Blue, Orange, and Purple.
+  - Slate, Blue, Orange, and Purple color accents so you can personalize it :)
 
 ---
 
