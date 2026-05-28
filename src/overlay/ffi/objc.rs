@@ -15,54 +15,35 @@ pub(in crate::overlay) const NOTCH_BAR_TOP_INSET: f64 = 6.0;
 pub(in crate::overlay) const NOTCH_BAR_MAX_HEIGHT: f64 = 40.0;
 pub(in crate::overlay) const NOTCH_DOT_BOTTOM_INSET: f64 = 12.0;
 
-pub(in crate::overlay) const GLOW_PADDING: f64 = 28.0;
-pub(in crate::overlay) const GLOW_STROKE_WIDTH: f64 = 5.5;
-pub(in crate::overlay) const GLOW_SHADOW_RADIUS: f64 = 20.0;
-pub(in crate::overlay) const GLOW_CORNER_RADIUS: f64 = 14.0;
-pub(in crate::overlay) const GLOW_ORBIT_DURATION: f64 = 1.4;
-pub(in crate::overlay) const GLOW_COMET_LENGTH: f64 = 120.0;
+pub(in crate::overlay) const GLOW_PADDING: f64 = 144.0;
+pub(in crate::overlay) const GLOW_AURA_SIZE: f64 = 136.0;
+pub(in crate::overlay) const GLOW_AURA_SCALE_X: f64 = 1.75;
+pub(in crate::overlay) const GLOW_AURA_SCALE_Y: f64 = 0.85;
+pub(in crate::overlay) const GLOW_AURA_NOTCH_OFFSET: f64 = 12.0;
+pub(in crate::overlay) const GLOW_BLUR_RADIUS: f64 = 28.0;
+pub(in crate::overlay) const GLOW_AURA_OPACITY: f64 = 0.58;
+pub(in crate::overlay) const GLOW_FLARE_BLUR_RADIUS: f64 = 7.0;
+pub(in crate::overlay) const GLOW_FLARE_OPACITY: f64 = 0.68;
+pub(in crate::overlay) const GLOW_BREATHE_DURATION: f64 = 6.0;
+pub(in crate::overlay) const GLOW_BREATHE_MIN_SCALE: f64 = 0.86;
+pub(in crate::overlay) const GLOW_BREATHE_MAX_SCALE: f64 = 1.18;
+pub(in crate::overlay) const GLOW_SPIN_DURATION: f64 = 12.0;
 
 // ---------------------------------------------------------------------------
-// Objective-C / CoreGraphics FFI
+// Objective-C / AppKit FFI
 // ---------------------------------------------------------------------------
 
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {}
 #[link(name = "QuartzCore", kind = "framework")]
 unsafe extern "C" {}
-#[link(name = "CoreGraphics", kind = "framework")]
+#[link(name = "CoreImage", kind = "framework")]
 unsafe extern "C" {}
 
 unsafe extern "C" {
     pub(in crate::overlay) fn objc_getClass(name: *const c_char) -> *mut c_void;
     pub(in crate::overlay) fn sel_registerName(name: *const c_char) -> *mut c_void;
     pub(in crate::overlay) fn objc_msgSend(receiver: *mut c_void, sel: *mut c_void) -> *mut c_void;
-}
-
-unsafe extern "C" {
-    pub(in crate::overlay) fn CGPathCreateMutable() -> *mut c_void;
-    pub(in crate::overlay) fn CGPathMoveToPoint(
-        path: *mut c_void,
-        m: *const c_void,
-        x: f64,
-        y: f64,
-    );
-    pub(in crate::overlay) fn CGPathAddLineToPoint(
-        path: *mut c_void,
-        m: *const c_void,
-        x: f64,
-        y: f64,
-    );
-    pub(in crate::overlay) fn CGPathAddArcToPoint(
-        path: *mut c_void,
-        m: *const c_void,
-        x1: f64,
-        y1: f64,
-        x2: f64,
-        y2: f64,
-        radius: f64,
-    );
-    pub(in crate::overlay) fn CGPathRelease(path: *mut c_void);
 }
 
 pub(in crate::overlay) unsafe fn nsstring_cstr(s: &CStr) -> *mut c_void {
