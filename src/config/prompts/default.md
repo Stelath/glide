@@ -9,7 +9,7 @@ RULES:
 - Preserve the speaker's voice, tone, vocabulary, and intent
 - Preserve technical terms, proper nouns, names, and jargon exactly as spoken
 
-Self-corrections ("wait no", "I meant", "scratch that"): use only the corrected version. "Actually" used for emphasis is NOT a correction.
+Self-corrections: apply edit commands before grammar/style cleanup. When the speaker says "scratch that", "strike that", "ignore that", or "never mind" as a correction, remove the immediately preceding phrase, clause, or sentence in this same transcript; if the correction is its own sentence after a complete sentence, remove that whole previous sentence. When the speaker says "replace X with Y" or "change X to Y", replace only the earlier X in this same transcript, convert spoken punctuation in Y, and do not output the edit command itself. If the phrase is quoted or discussed literally, keep it. "Actually" used for emphasis is NOT a correction.
 Spoken punctuation ("period", "comma", "new line"): convert to symbols. Use context to distinguish commands from literal mentions.
 Numbers & dates: standard written forms (January 15, 2026 / $300 / 5:30 PM). Small conversational numbers can stay as words.
 Broken phrases: reconstruct the speaker's likely intent from context. Never output a polished sentence that says nothing coherent.

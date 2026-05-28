@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
 use cpal::{
@@ -6,8 +9,11 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 
-use crate::config::AudioConfig;
-use crate::state::LiveAudioData;
+use crate::{
+    config::AudioConfig,
+    state::LiveAudioData,
+    trace::{TraceSession, attrs},
+};
 
 const RING_BUFFER_SIZE: usize = 8192;
 
@@ -117,28 +123,58 @@ impl AudioRecorder {
     }
 
     pub fn stop(&mut self) -> Result<RecordedAudio> {
-        let active = self.active.take().context("recording is not active")?;
-        drop(active.stream);
+        self.stop_profiled(&TraceSession::disabled())
+    }
 
-        let samples = active.samples.lock().expect("samples poisoned").clone();
+    pub(crate) fn stop_profiled(&mut self, trace: &TraceSession) -> Result<RecordedAudio> {
+        let total_started = Instant::now();
+        let active = trace.measure_result("audio_stop_take_active", || {
+            self.active.take().context("recording is not active")
+        })?;
+
+        let ActiveRecording {
+            stream,
+            samples,
+            sample_rate,
+            live_audio: _live_audio,
+        } = active;
+
+        trace.measure("audio_stop_drop_stream", || drop(stream));
+
+        let samples = trace.measure("audio_stop_clone_samples", || {
+            samples.lock().expect("samples poisoned").clone()
+        });
         anyhow::ensure!(!samples.is_empty(), "no audio samples were captured");
 
         let mut bytes = Vec::new();
         let spec = hound::WavSpec {
             channels: 1,
-            sample_rate: active.sample_rate,
+            sample_rate,
             bits_per_sample: 16,
             sample_format: hound::SampleFormat::Int,
         };
 
-        let mut writer = hound::WavWriter::new(std::io::Cursor::new(&mut bytes), spec)
-            .context("failed to create wav writer")?;
-        for sample in &samples {
-            writer
-                .write_sample(*sample)
-                .context("failed to write wav sample")?;
-        }
-        writer.finalize().context("failed to finalize wav")?;
+        trace.measure_result("audio_stop_wav_encode", || {
+            let mut writer = hound::WavWriter::new(std::io::Cursor::new(&mut bytes), spec)
+                .context("failed to create wav writer")?;
+            for sample in &samples {
+                writer
+                    .write_sample(*sample)
+                    .context("failed to write wav sample")?;
+            }
+            writer.finalize().context("failed to finalize wav")?;
+            Ok(())
+        })?;
+
+        trace.record_with_attrs(
+            "audio_stop_total",
+            total_started.elapsed(),
+            attrs([
+                ("sample_count", samples.len().to_string()),
+                ("byte_count", bytes.len().to_string()),
+                ("sample_rate", sample_rate.to_string()),
+            ]),
+        );
 
         Ok(RecordedAudio {
             bytes,

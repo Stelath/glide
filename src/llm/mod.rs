@@ -1,12 +1,18 @@
 use anyhow::Result;
 
-use crate::config::{Provider, ProvidersConfig};
+use crate::{
+    benchmark::ProfileCollector,
+    config::{Provider, ProvidersConfig},
+};
 
 mod apple;
 mod openai;
 mod util;
 
-pub(crate) use util::strip_think_tags;
+pub(crate) use util::{
+    build_cleanup_system_prompt, build_cleanup_user_prompt, prepare_cleanup_transcript,
+    strip_think_tags,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct CleanupContext {
@@ -26,15 +32,42 @@ pub fn build_provider(
     system_prompt: &str,
     providers: &ProvidersConfig,
 ) -> Result<Box<dyn LlmProvider>> {
+    build_profiled_provider(
+        provider,
+        model,
+        system_prompt,
+        providers,
+        ProfileCollector::disabled(),
+    )
+}
+
+pub(crate) fn build_profiled_provider(
+    provider: Provider,
+    model: &str,
+    system_prompt: &str,
+    providers: &ProvidersConfig,
+    profile: ProfileCollector,
+) -> Result<Box<dyn LlmProvider>> {
+    let system_prompt = build_cleanup_system_prompt(system_prompt);
     match provider {
-        // OpenAI, Groq, and Cerebras use the OpenAI-compatible API format.
-        Provider::OpenAi | Provider::Groq | Provider::Cerebras => Ok(Box::new(
-            openai::OpenAiLlmProvider::new(provider, model, system_prompt, providers)?,
-        )),
+        // OpenAI, Groq, Cerebras, and Fireworks use the OpenAI-compatible API format.
+        Provider::OpenAi | Provider::Groq | Provider::Cerebras | Provider::Fireworks => {
+            Ok(Box::new(openai::OpenAiLlmProvider::new(
+                provider,
+                model,
+                &system_prompt,
+                providers,
+                profile,
+            )?))
+        }
         Provider::AppleLocal => Ok(Box::new(apple::AppleFoundationLlmProvider::new(
             model,
-            system_prompt,
+            &system_prompt,
+            profile,
         ))),
+        Provider::ElevenLabs => {
+            anyhow::bail!("ElevenLabs does not provide an LLM cleanup model")
+        }
         Provider::Parakeet => anyhow::bail!("Parakeet does not provide an LLM cleanup model"),
     }
 }

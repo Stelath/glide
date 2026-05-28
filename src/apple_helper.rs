@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::benchmark::ProfileCollector;
 use crate::llm::CleanupContext;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +76,8 @@ pub struct AppleSpeechInstallProgress {
 struct HelperResponse {
     ok: bool,
     text: Option<String>,
+    #[serde(default)]
+    timings: Vec<HelperTiming>,
     #[cfg_attr(test, allow(dead_code))]
     #[serde(default)]
     speech_models: Vec<AppleSpeechModel>,
@@ -92,12 +95,20 @@ struct HelperResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HelperTiming {
+    phase: String,
+    duration_ms: f64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TranscribeRequest {
     audio_path: String,
     model_id: String,
     vocabulary: Vec<String>,
+    profile: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -114,6 +125,7 @@ struct CleanupRequest<'a> {
     system_prompt: &'a str,
     target_app: Option<&'a str>,
     mode_hint: Option<&'a str>,
+    profile: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -181,16 +193,28 @@ pub(crate) fn speech_model_request_json(model_id: &str) -> Result<Vec<u8>> {
         .context("failed to encode Apple Speech model request")
 }
 
+#[allow(dead_code)]
 pub fn transcribe(audio: &[u8], model_id: String, vocabulary: Vec<String>) -> Result<String> {
+    transcribe_profiled(audio, model_id, vocabulary, ProfileCollector::disabled())
+}
+
+pub(crate) fn transcribe_profiled(
+    audio: &[u8],
+    model_id: String,
+    vocabulary: Vec<String>,
+    profile: ProfileCollector,
+) -> Result<String> {
     let audio_path = write_temp_audio(audio)?;
     let request = TranscribeRequest {
         audio_path: audio_path.to_string_lossy().to_string(),
         model_id,
         vocabulary,
+        profile: profile.is_enabled(),
     };
     let input = serde_json::to_vec(&request).context("failed to encode Apple Speech request")?;
     let started = Instant::now();
-    let result = run_persistent_helper("transcribe", &input).and_then(|response| {
+    let result = run_persistent_helper("transcribe", &input, &profile).and_then(|response| {
+        record_helper_timings(&profile, "apple_stt_helper", &response.timings);
         response
             .text
             .map(|text| text.trim().to_string())
@@ -204,11 +228,28 @@ pub fn transcribe(audio: &[u8], model_id: String, vocabulary: Vec<String>) -> Re
     result
 }
 
+#[allow(dead_code)]
 pub fn cleanup(
     model_id: &str,
     raw_text: &str,
     system_prompt: &str,
     context: &CleanupContext,
+) -> Result<String> {
+    cleanup_profiled(
+        model_id,
+        raw_text,
+        system_prompt,
+        context,
+        ProfileCollector::disabled(),
+    )
+}
+
+pub(crate) fn cleanup_profiled(
+    model_id: &str,
+    raw_text: &str,
+    system_prompt: &str,
+    context: &CleanupContext,
+    profile: ProfileCollector,
 ) -> Result<String> {
     let request = CleanupRequest {
         model_id,
@@ -216,11 +257,13 @@ pub fn cleanup(
         system_prompt,
         target_app: context.target_app.as_deref(),
         mode_hint: context.mode_hint.as_deref(),
+        profile: profile.is_enabled(),
     };
     let input =
         serde_json::to_vec(&request).context("failed to encode Apple Foundation Models request")?;
     let started = Instant::now();
-    let result = run_persistent_helper("cleanup", &input).and_then(|response| {
+    let result = run_persistent_helper("cleanup", &input, &profile).and_then(|response| {
+        record_helper_timings(&profile, "apple_foundation_helper", &response.timings);
         response
             .text
             .map(|text| text.trim().to_string())
@@ -233,13 +276,49 @@ pub fn cleanup(
     result
 }
 
-fn run_persistent_helper(command: &str, input: &[u8]) -> Result<HelperResponse> {
+pub(crate) fn prewarm_foundation(model_id: &str, system_prompt: &str) -> Result<()> {
+    let request = CleanupRequest {
+        model_id,
+        raw_text: "",
+        system_prompt,
+        target_app: None,
+        mode_hint: None,
+        profile: false,
+    };
+    let input = serde_json::to_vec(&request)
+        .context("failed to encode Apple Foundation prewarm request")?;
+    let started = Instant::now();
+    let result = run_persistent_helper("prewarm-foundation", &input, &ProfileCollector::disabled())
+        .map(|_| ());
+    eprintln!(
+        "[glide] Apple helper: prewarm request finished in {} ms",
+        started.elapsed().as_millis()
+    );
+    result
+}
+
+fn run_persistent_helper(
+    command: &str,
+    input: &[u8],
+    profile: &ProfileCollector,
+) -> Result<HelperResponse> {
     let helper = helper_path()?;
     let client = PERSISTENT_HELPER.get_or_init(|| Mutex::new(PersistentHelperClient::new(helper)));
     client
         .lock()
         .expect("Apple persistent helper client poisoned")
-        .request(command, input)
+        .request(command, input, profile)
+}
+
+fn record_helper_timings(profile: &ProfileCollector, prefix: &str, timings: &[HelperTiming]) {
+    for timing in timings {
+        if timing.duration_ms.is_finite() && timing.duration_ms >= 0.0 {
+            profile.record(
+                format!("{prefix}_{}", timing.phase),
+                std::time::Duration::from_secs_f64(timing.duration_ms / 1000.0),
+            );
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -282,18 +361,25 @@ impl PersistentHelperClient {
         }
     }
 
-    fn request(&mut self, command: &str, input: &[u8]) -> Result<HelperResponse> {
+    fn request(
+        &mut self,
+        command: &str,
+        input: &[u8],
+        profile: &ProfileCollector,
+    ) -> Result<HelperResponse> {
         let request = persistent_request_json(command, input)?;
         for attempt in 0..=1 {
             if self.server.is_none() {
-                self.start_server()?;
+                profile.measure_result("apple_helper_server_start", || self.start_server())?;
+            } else {
+                profile.record("apple_helper_server_reuse", std::time::Duration::ZERO);
             }
 
             let result = self
                 .server
                 .as_mut()
                 .context("Apple persistent helper server was unavailable")?
-                .send(command, &request);
+                .send(command, &request, profile);
 
             match result {
                 Ok(response) => return Ok(response),
@@ -354,7 +440,34 @@ impl PersistentHelperClient {
 }
 
 impl PersistentHelperServer {
-    fn send(&mut self, command: &str, request: &[u8]) -> Result<HelperResponse> {
+    fn send(
+        &mut self,
+        command: &str,
+        request: &[u8],
+        profile: &ProfileCollector,
+    ) -> Result<HelperResponse> {
+        let round_trip_started = Instant::now();
+        match command {
+            "transcribe" => {
+                profile.record_since_marker("stt_start", "stt_start_to_stt_helper_request_start");
+                profile.record_since_marker(
+                    "flow_release",
+                    "flow_release_to_stt_helper_request_start",
+                );
+            }
+            "cleanup" => {
+                profile.record_since_marker("llm_start", "llm_start_to_llm_helper_request_start");
+                profile.record_since_marker(
+                    "flow_release",
+                    "flow_release_to_llm_helper_request_start",
+                );
+                profile.record_since_marker(
+                    "flow_stt_result",
+                    "flow_stt_result_to_llm_helper_request_start",
+                );
+            }
+            _ => {}
+        }
         self.stdin
             .write_all(request)
             .map_err(|error| persistent_transport_error("write request", error))?;
@@ -376,6 +489,7 @@ impl PersistentHelperServer {
             );
         }
 
+        profile.record("apple_helper_round_trip", round_trip_started.elapsed());
         decode_persistent_response(command, line.trim())
     }
 }
@@ -565,6 +679,13 @@ pub(crate) fn helper_path() -> Result<PathBuf> {
         }
     }
 
+    if let Ok(path) = std::env::var("GLIDE_BENCH_APPLE_HELPER_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
     if let Some(path) = option_env!("GLIDE_APPLE_HELPER_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -596,6 +717,7 @@ mod tests {
             audio_path: "/tmp/glide.wav".to_string(),
             model_id: "speechanalyzer-en_US".to_string(),
             vocabulary: vec!["Glide".to_string()],
+            profile: true,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("audioPath"));
@@ -607,6 +729,7 @@ mod tests {
             system_prompt: "clean",
             target_app: None,
             mode_hint: None,
+            profile: true,
         };
         let json = serde_json::to_string(&cleanup).unwrap();
         assert!(json.contains("modelId"));
@@ -619,6 +742,7 @@ mod tests {
             audio_path: "/tmp/glide.wav".to_string(),
             model_id: "speechanalyzer-en_US".to_string(),
             vocabulary: vec!["Glide".to_string()],
+            profile: false,
         };
         let input = serde_json::to_vec(&request).unwrap();
         let encoded = persistent_request_json("transcribe", &input).unwrap();
@@ -680,10 +804,13 @@ done
             system_prompt: "clean",
             target_app: None,
             mode_hint: None,
+            profile: false,
         };
         let input = serde_json::to_vec(&cleanup).unwrap();
         let mut client = PersistentHelperClient::new(helper);
-        let response = client.request("cleanup", &input).unwrap();
+        let response = client
+            .request("cleanup", &input, &ProfileCollector::disabled())
+            .unwrap();
 
         assert_eq!(response.text.as_deref(), Some("warm"));
     }

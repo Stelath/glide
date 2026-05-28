@@ -8,6 +8,10 @@ description = "A macOS dictation app with spectrum analyzer overlay"
 name = "Glide"
 path = "src/main.rs"
 
+[[bin]]
+name = "glide-bench"
+path = "src/bin/glide_bench.rs"
+
 [dependencies]
 # UI
 gpui = "0.2"
@@ -15,8 +19,10 @@ gpui-component = "0.5"
 gpui-component-assets = "0.5"
 
 # Audio capture
+block2 = "0.6"
 cpal = "0.15"
 hound = "3"
+objc2 = "0.6"
 sherpa-onnx = "1.13.2"
 
 # FFT / spectrum analysis for visualizer

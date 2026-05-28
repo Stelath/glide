@@ -2,10 +2,12 @@ use anyhow::Result;
 
 use crate::{
     audio::AudioFormat,
+    benchmark::ProfileCollector,
     config::{Provider, ProvidersConfig},
 };
 
 mod apple;
+mod elevenlabs;
 mod openai;
 mod parakeet;
 
@@ -21,13 +23,36 @@ pub fn build_provider(
     providers: &ProvidersConfig,
     vocabulary_prompt: Option<String>,
 ) -> Result<Box<dyn SttProvider>> {
+    build_profiled_provider(
+        provider,
+        model,
+        providers,
+        vocabulary_prompt,
+        ProfileCollector::disabled(),
+    )
+}
+
+pub(crate) fn prewarm_provider(provider: Provider, model: &str) -> Result<()> {
     match provider {
-        // OpenAI and Groq use the OpenAI-compatible transcription API format.
-        Provider::OpenAi | Provider::Groq => Ok(Box::new(openai::OpenAiSttProvider::new(
-            provider,
-            model,
-            providers,
-            vocabulary_prompt,
+        Provider::Parakeet => parakeet::prewarm_model(model),
+        _ => Ok(()),
+    }
+}
+
+pub(crate) fn build_profiled_provider(
+    provider: Provider,
+    model: &str,
+    providers: &ProvidersConfig,
+    vocabulary_prompt: Option<String>,
+    profile: ProfileCollector,
+) -> Result<Box<dyn SttProvider>> {
+    match provider {
+        // OpenAI, Groq, and Fireworks use OpenAI-style multipart transcription APIs.
+        Provider::OpenAi | Provider::Groq | Provider::Fireworks => Ok(Box::new(
+            openai::OpenAiSttProvider::new(provider, model, providers, vocabulary_prompt, profile)?,
+        )),
+        Provider::ElevenLabs => Ok(Box::new(elevenlabs::ElevenLabsSttProvider::new(
+            model, providers, profile,
         )?)),
         Provider::Cerebras => {
             anyhow::bail!("Cerebras does not provide a speech-to-text model")
@@ -35,7 +60,10 @@ pub fn build_provider(
         Provider::AppleLocal => Ok(Box::new(apple::AppleSpeechProvider::new(
             model,
             vocabulary_prompt,
+            profile,
         )?)),
-        Provider::Parakeet => Ok(Box::new(parakeet::ParakeetSttProvider::new(model)?)),
+        Provider::Parakeet => Ok(Box::new(parakeet::ParakeetSttProvider::new(
+            model, profile,
+        )?)),
     }
 }

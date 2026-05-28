@@ -11,6 +11,7 @@ let appleFoundationDefaultModelId = "apple-foundation-default"
 struct HelperResponse: Encodable {
     var ok: Bool
     var text: String?
+    var timings: [HelperTiming]? = nil
     var speechModels: [AppleSpeechModelResponse]?
     var appleSpeechAvailable: Bool?
     var appleSpeechReason: String?
@@ -18,6 +19,11 @@ struct HelperResponse: Encodable {
     var foundationModelsAvailable: Bool?
     var foundationModelsReason: String?
     var error: String?
+}
+
+struct HelperTiming: Encodable {
+    var phase: String
+    var durationMs: Double
 }
 
 struct AppleSpeechModelResponse: Encodable {
@@ -57,6 +63,7 @@ struct TranscribeRequest: Decodable {
     var audioPath: String
     var modelId: String?
     var vocabulary: [String]?
+    var profile: Bool?
 }
 
 struct SpeechModelRequest: Decodable {
@@ -69,6 +76,7 @@ struct CleanupRequest: Decodable {
     var systemPrompt: String
     var targetApp: String?
     var modeHint: String?
+    var profile: Bool?
 }
 
 @main
@@ -129,12 +137,26 @@ struct GlideAppleHelper {
                 await serve()
             case "transcribe":
                 let request: TranscribeRequest = try readStdinJSON()
-                let text = try await transcribe(request)
-                printResponse(HelperResponse(ok: true, text: text))
+                if request.profile == true {
+                    let result = try await transcribeProfiled(request)
+                    printResponse(HelperResponse(ok: true, text: result.text, timings: result.timings))
+                } else {
+                    let text = try await transcribe(request)
+                    printResponse(HelperResponse(ok: true, text: text))
+                }
             case "cleanup":
                 let request: CleanupRequest = try readStdinJSON()
-                let text = try await cleanup(request)
-                printResponse(HelperResponse(ok: true, text: text))
+                if request.profile == true {
+                    let result = try await cleanupProfiled(request)
+                    printResponse(HelperResponse(ok: true, text: result.text, timings: result.timings))
+                } else {
+                    let text = try await cleanup(request)
+                    printResponse(HelperResponse(ok: true, text: text))
+                }
+            case "prewarm-foundation":
+                let request: CleanupRequest = try readStdinJSON()
+                try await prewarmFoundation(request)
+                printResponse(HelperResponse(ok: true))
             default:
                 printResponse(.failure("unknown helper command: \(CommandLine.arguments[1])"))
             }
@@ -323,12 +345,24 @@ struct GlideAppleHelper {
             switch envelope.command {
             case "transcribe":
                 let request: TranscribeRequest = try GlideAppleHelper.decodeServeRequest(envelope.requestData)
+                if request.profile == true {
+                    let result = try await transcribeProfiled(request)
+                    return HelperResponse(ok: true, text: result.text, timings: result.timings)
+                }
                 let text = try await transcribe(request)
                 return HelperResponse(ok: true, text: text)
             case "cleanup":
                 let request: CleanupRequest = try GlideAppleHelper.decodeServeRequest(envelope.requestData)
+                if request.profile == true {
+                    let result = try await cleanupProfiled(request)
+                    return HelperResponse(ok: true, text: result.text, timings: result.timings)
+                }
                 let text = try await cleanup(request)
                 return HelperResponse(ok: true, text: text)
+            case "prewarm-foundation":
+                let request: CleanupRequest = try GlideAppleHelper.decodeServeRequest(envelope.requestData)
+                try prewarmFoundation(request)
+                return HelperResponse(ok: true)
             default:
                 return .failure("unknown helper command: \(envelope.command)")
             }
@@ -384,6 +418,20 @@ struct GlideAppleHelper {
             }
         }
 
+        func transcribeProfiled(_ request: TranscribeRequest) async throws -> (text: String, timings: [HelperTiming]) {
+            let started = Date()
+            let text = try await transcribe(request)
+            return (
+                text,
+                [
+                    HelperTiming(
+                        phase: "swift_transcribe_total",
+                        durationMs: Date().timeIntervalSince(started) * 1000
+                    )
+                ]
+            )
+        }
+
         private func preparedSpeechLocale(for modelId: String) async throws -> Locale {
             if let locale = speechLocales[modelId] {
                 return locale
@@ -425,6 +473,20 @@ struct GlideAppleHelper {
             return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        func cleanupProfiled(_ request: CleanupRequest) async throws -> (text: String, timings: [HelperTiming]) {
+            let started = Date()
+            let text = try await cleanup(request)
+            return (
+                text,
+                [
+                    HelperTiming(
+                        phase: "swift_cleanup_total",
+                        durationMs: Date().timeIntervalSince(started) * 1000
+                    )
+                ]
+            )
+        }
+
         private func takeWarmFoundationSession(for key: String) -> LanguageModelSession? {
             guard var sessions = foundationSessions[key], !sessions.isEmpty else {
                 return nil
@@ -446,6 +508,19 @@ struct GlideAppleHelper {
             } catch {
                 fputs("[glide] Apple Foundation prewarm failed: \(error.localizedDescription)\n", stderr)
             }
+        }
+
+        func prewarmFoundation(_ request: CleanupRequest) throws {
+            let key = foundationSessionKey(modelId: request.modelId, systemPrompt: request.systemPrompt)
+            if (foundationSessions[key]?.count ?? 0) >= maxWarmFoundationSessionsPerKey {
+                return
+            }
+
+            let session = try makeWarmFoundationSession(
+                modelId: request.modelId,
+                systemPrompt: request.systemPrompt
+            )
+            foundationSessions[key, default: []].append(session)
         }
 
         private func makeWarmFoundationSession(
@@ -470,6 +545,15 @@ struct GlideAppleHelper {
 
         let runtime = Runtime()
         return try await runtime.transcribe(request)
+    }
+
+    private static func transcribeProfiled(_ request: TranscribeRequest) async throws -> (text: String, timings: [HelperTiming]) {
+        guard #available(macOS 26.0, *) else {
+            throw HelperError("Apple Speech locale models require macOS 26 or newer")
+        }
+
+        let runtime = Runtime()
+        return try await runtime.transcribeProfiled(request)
     }
 
     private static let foundationModelDefs = [
@@ -547,15 +631,34 @@ struct GlideAppleHelper {
         return try await runtime.cleanup(request)
     }
 
+    private static func cleanupProfiled(_ request: CleanupRequest) async throws -> (text: String, timings: [HelperTiming]) {
+        guard #available(macOS 26.0, *) else {
+            throw HelperError("Apple Foundation Models require macOS 26 or newer")
+        }
+
+        let runtime = Runtime()
+        return try await runtime.cleanupProfiled(request)
+    }
+
+    private static func prewarmFoundation(_ request: CleanupRequest) async throws {
+        guard #available(macOS 26.0, *) else {
+            throw HelperError("Apple Foundation Models require macOS 26 or newer")
+        }
+
+        let runtime = Runtime()
+        return try await runtime.prewarmFoundation(request)
+    }
+
     private static func cleanupPrompt(_ request: CleanupRequest) -> String {
-        var prompt = ""
+        var prompt = "<dictation_context>\n"
         if let targetApp = request.targetApp, !targetApp.isEmpty {
             prompt += "Target app: \(targetApp)\n"
         }
         if let modeHint = request.modeHint, !modeHint.isEmpty {
             prompt += "Writing mode: \(modeHint)\n"
         }
-        prompt += "Transcript:\n\(request.rawText)"
+        prompt += "</dictation_context>\n\n"
+        prompt += "Transcript:\n\"\"\"\n\(request.rawText)\n\"\"\""
         return prompt
     }
 
