@@ -29,6 +29,37 @@ fn hotkey_presets() -> [(HotkeyTrigger, &'static str); 4] {
     ]
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(name: &'static str, granted: bool) -> permissions::PermissionStatus {
+        permissions::PermissionStatus {
+            name,
+            description: "",
+            granted,
+            settings_url: "",
+            icon: "",
+        }
+    }
+
+    #[test]
+    fn test_permission_state_from_statuses() {
+        let statuses = vec![
+            status("Microphone", true),
+            status("Accessibility", false),
+            status("Input Monitoring", true),
+        ];
+
+        let state = PermissionState::from_statuses(&statuses);
+
+        assert!(state.microphone);
+        assert!(!state.accessibility);
+        assert!(state.input_monitoring);
+        assert!(!state.all_granted());
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn hotkey_presets() -> [(HotkeyTrigger, &'static str); 4] {
     [
@@ -123,6 +154,7 @@ impl OnboardingStep {
 // Permission state
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PermissionState {
     pub microphone: bool,
     pub accessibility: bool,
@@ -130,17 +162,25 @@ pub(super) struct PermissionState {
 }
 
 impl PermissionState {
-    pub(super) fn check() -> Self {
+    pub(super) fn from_statuses(statuses: &[permissions::PermissionStatus]) -> Self {
         Self {
-            microphone: permissions::has_microphone_access(),
-            accessibility: permissions::has_accessibility_access(),
-            input_monitoring: permissions::has_input_monitoring_access(),
+            microphone: permission_granted(statuses, "Microphone"),
+            accessibility: permission_granted(statuses, "Accessibility"),
+            input_monitoring: permission_granted(statuses, "Input Monitoring"),
         }
     }
 
     fn all_granted(&self) -> bool {
         self.microphone && self.accessibility && self.input_monitoring
     }
+}
+
+fn permission_granted(statuses: &[permissions::PermissionStatus], name: &str) -> bool {
+    statuses
+        .iter()
+        .find(|status| status.name == name)
+        .map(|status| status.granted)
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------

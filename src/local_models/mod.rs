@@ -29,6 +29,8 @@ use apple::{
     set_apple_speech_models_unavailable_reason,
 };
 #[cfg(test)]
+pub(crate) use parakeet::set_parakeet_install_state_for_test;
+#[cfg(test)]
 use parakeet::{
     REQUIRED_PARAKEET_FILES, clear_download_cancellation, clear_download_state, download_state,
     is_download_cancelled, safe_extract_tar_bz2, set_download_state, strip_archive_root,

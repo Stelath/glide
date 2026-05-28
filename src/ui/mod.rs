@@ -17,6 +17,7 @@ use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::{Icon, IconName};
 
 use crate::config::{ColorAccent, GlideConfig, Style, ThemePreference};
+use crate::permissions;
 use crate::state::SharedState;
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(800);
@@ -76,6 +77,8 @@ pub struct SettingsApp {
     openai_inputs: ProviderInputs,
     groq_inputs: ProviderInputs,
     cerebras_inputs: ProviderInputs,
+    fireworks_inputs: ProviderInputs,
+    elevenlabs_inputs: ProviderInputs,
     expanded_provider: Option<usize>,
     apple_speech_search: Entity<InputState>,
     expanded_style: Option<usize>,
@@ -89,6 +92,13 @@ pub struct SettingsApp {
     last_fetched_openai_key: String,
     last_fetched_groq_key: String,
     last_fetched_cerebras_key: String,
+    last_fetched_fireworks_key: String,
+    last_fetched_elevenlabs_key: String,
+    last_fetched_openai_base_url: String,
+    last_fetched_groq_base_url: String,
+    last_fetched_cerebras_base_url: String,
+    last_fetched_fireworks_base_url: String,
+    last_fetched_elevenlabs_base_url: String,
 
     save_pending: bool,
 
@@ -101,6 +111,7 @@ pub struct SettingsApp {
     show_onboarding: bool,
     onboarding_step: onboarding::OnboardingStep,
     onboarding_perm_state: onboarding::PermissionState,
+    permission_statuses: Vec<permissions::PermissionStatus>,
     onboarding_selected_trigger: Option<crate::config::HotkeyTrigger>,
     onboarding_recording_custom: bool,
 
@@ -142,6 +153,24 @@ impl SettingsApp {
         let cerebras_base_url =
             cx.new(|cx| InputState::new(window, cx).default_value(&cerebras_creds.base_url));
 
+        let fireworks_creds = &config.providers.fireworks;
+        let fireworks_api_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .default_value(&fireworks_creds.api_key)
+        });
+        let fireworks_base_url =
+            cx.new(|cx| InputState::new(window, cx).default_value(&fireworks_creds.base_url));
+
+        let elevenlabs_creds = &config.providers.elevenlabs;
+        let elevenlabs_api_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .default_value(&elevenlabs_creds.api_key)
+        });
+        let elevenlabs_base_url =
+            cx.new(|cx| InputState::new(window, cx).default_value(&elevenlabs_creds.base_url));
+
         let default_prompt = cx.new(|cx| {
             InputState::new(window, cx)
                 .auto_grow(3, 12)
@@ -161,6 +190,10 @@ impl SettingsApp {
             cx.subscribe_in(&groq_base_url, window, Self::on_input_change),
             cx.subscribe_in(&cerebras_api_key, window, Self::on_input_change),
             cx.subscribe_in(&cerebras_base_url, window, Self::on_input_change),
+            cx.subscribe_in(&fireworks_api_key, window, Self::on_input_change),
+            cx.subscribe_in(&fireworks_base_url, window, Self::on_input_change),
+            cx.subscribe_in(&elevenlabs_api_key, window, Self::on_input_change),
+            cx.subscribe_in(&elevenlabs_base_url, window, Self::on_input_change),
             cx.subscribe_in(&default_prompt, window, Self::on_input_change),
         ];
 
@@ -189,45 +222,22 @@ impl SettingsApp {
         );
 
         let shared_for_defaults = shared.clone();
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             if crate::model_catalog::any_provider_verified() {
                 let _ = shared_for_defaults.update_config(|config| {
                     crate::model_catalog::apply_smart_defaults_initial(config);
                 });
             }
+            let _ = this.update(cx, |_this, cx| cx.notify());
         })
         .detach();
 
         let show_onboarding = !config.app.onboarding_completed;
-
-        // Start permission polling if onboarding is active
-        if show_onboarding {
-            cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor().timer(Duration::from_secs(2)).await;
-                    let ok = this.update(cx, |view, cx| {
-                        if !view.show_onboarding {
-                            return false; // stop polling
-                        }
-                        let new = onboarding::PermissionState::check();
-                        let changed = view.onboarding_perm_state.microphone != new.microphone
-                            || view.onboarding_perm_state.accessibility != new.accessibility
-                            || view.onboarding_perm_state.input_monitoring != new.input_monitoring;
-                        if changed {
-                            view.onboarding_perm_state = new;
-                            cx.notify();
-                        }
-                        true // keep polling
-                    });
-                    match ok {
-                        Ok(true) => {}
-                        _ => break,
-                    }
-                }
-            })
-            .detach();
-        }
+        let permission_statuses = permissions::check_all();
+        let onboarding_perm_state =
+            onboarding::PermissionState::from_statuses(&permission_statuses);
+        Self::start_permission_polling(cx);
 
         Self {
             shared,
@@ -247,6 +257,14 @@ impl SettingsApp {
                 api_key: cerebras_api_key,
                 base_url: cerebras_base_url,
             },
+            fireworks_inputs: ProviderInputs {
+                api_key: fireworks_api_key,
+                base_url: fireworks_base_url,
+            },
+            elevenlabs_inputs: ProviderInputs {
+                api_key: elevenlabs_api_key,
+                base_url: elevenlabs_base_url,
+            },
             expanded_provider: Some(0),
             apple_speech_search,
             expanded_style: Some(0),
@@ -258,13 +276,21 @@ impl SettingsApp {
             last_fetched_openai_key: config.providers.openai.api_key.clone(),
             last_fetched_groq_key: config.providers.groq.api_key.clone(),
             last_fetched_cerebras_key: config.providers.cerebras.api_key.clone(),
+            last_fetched_fireworks_key: config.providers.fireworks.api_key.clone(),
+            last_fetched_elevenlabs_key: config.providers.elevenlabs.api_key.clone(),
+            last_fetched_openai_base_url: config.providers.openai.base_url.clone(),
+            last_fetched_groq_base_url: config.providers.groq.base_url.clone(),
+            last_fetched_cerebras_base_url: config.providers.cerebras.base_url.clone(),
+            last_fetched_fireworks_base_url: config.providers.fireworks.base_url.clone(),
+            last_fetched_elevenlabs_base_url: config.providers.elevenlabs.base_url.clone(),
             save_pending: false,
             vocabulary_input,
             replacement_find_input,
             replacement_replace_input,
             show_onboarding,
             onboarding_step: onboarding::OnboardingStep::Welcome,
-            onboarding_perm_state: onboarding::PermissionState::check(),
+            onboarding_perm_state,
+            permission_statuses,
             onboarding_selected_trigger: Some(onboarding::default_hotkey_preset()),
             onboarding_recording_custom: false,
             _subscriptions: subs,
@@ -303,6 +329,44 @@ impl SettingsApp {
         )
     }
 
+    fn start_permission_polling(cx: &mut gpui::Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let ok = this.update(cx, |view, cx| {
+                    if view.refresh_permissions() {
+                        cx.notify();
+                    }
+                    true
+                });
+                if ok.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn refresh_permissions(&mut self) -> bool {
+        let next_statuses = permissions::check_all();
+        let next_state = onboarding::PermissionState::from_statuses(&next_statuses);
+        let statuses_changed = self.permission_statuses != next_statuses;
+        let state_changed = self.onboarding_perm_state != next_state;
+        let microphone_changed = self.onboarding_perm_state.microphone != next_state.microphone;
+
+        if statuses_changed {
+            self.permission_statuses = next_statuses;
+        }
+        if state_changed {
+            self.onboarding_perm_state = next_state;
+        }
+        if microphone_changed {
+            self.shared.refresh_input_devices();
+        }
+
+        statuses_changed || state_changed
+    }
+
     fn on_input_change(
         &mut self,
         _emitter: &Entity<InputState>,
@@ -335,25 +399,47 @@ impl SettingsApp {
         let new_openai_key = draft.providers.openai.api_key.clone();
         let new_groq_key = draft.providers.groq.api_key.clone();
         let new_cerebras_key = draft.providers.cerebras.api_key.clone();
+        let new_fireworks_key = draft.providers.fireworks.api_key.clone();
+        let new_elevenlabs_key = draft.providers.elevenlabs.api_key.clone();
+        let new_openai_base_url = draft.providers.openai.base_url.clone();
+        let new_groq_base_url = draft.providers.groq.base_url.clone();
+        let new_cerebras_base_url = draft.providers.cerebras.base_url.clone();
+        let new_fireworks_base_url = draft.providers.fireworks.base_url.clone();
+        let new_elevenlabs_base_url = draft.providers.elevenlabs.base_url.clone();
         let providers_changed = new_openai_key != self.last_fetched_openai_key
             || new_groq_key != self.last_fetched_groq_key
-            || new_cerebras_key != self.last_fetched_cerebras_key;
+            || new_cerebras_key != self.last_fetched_cerebras_key
+            || new_fireworks_key != self.last_fetched_fireworks_key
+            || new_elevenlabs_key != self.last_fetched_elevenlabs_key
+            || new_openai_base_url != self.last_fetched_openai_base_url
+            || new_groq_base_url != self.last_fetched_groq_base_url
+            || new_cerebras_base_url != self.last_fetched_cerebras_base_url
+            || new_fireworks_base_url != self.last_fetched_fireworks_base_url
+            || new_elevenlabs_base_url != self.last_fetched_elevenlabs_base_url;
         let providers = draft.providers.clone();
         let _ = self.shared.update_config(move |config| *config = draft);
         if providers_changed {
             self.last_fetched_openai_key = new_openai_key;
             self.last_fetched_groq_key = new_groq_key;
             self.last_fetched_cerebras_key = new_cerebras_key;
+            self.last_fetched_fireworks_key = new_fireworks_key;
+            self.last_fetched_elevenlabs_key = new_elevenlabs_key;
+            self.last_fetched_openai_base_url = new_openai_base_url;
+            self.last_fetched_groq_base_url = new_groq_base_url;
+            self.last_fetched_cerebras_base_url = new_cerebras_base_url;
+            self.last_fetched_fireworks_base_url = new_fireworks_base_url;
+            self.last_fetched_elevenlabs_base_url = new_elevenlabs_base_url;
             crate::model_catalog::fetch_all_models(&providers);
 
             let shared = self.shared.clone();
-            cx.spawn(async move |_this, cx| {
+            cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
                 if crate::model_catalog::any_provider_verified() {
                     let _ = shared.update_config(|config| {
                         crate::model_catalog::apply_smart_defaults_initial(config);
                     });
                 }
+                let _ = this.update(cx, |_this, cx| cx.notify());
             })
             .detach();
         }
@@ -370,6 +456,14 @@ impl SettingsApp {
             self.cerebras_inputs.api_key.read(cx).value().to_string();
         config.providers.cerebras.base_url =
             self.cerebras_inputs.base_url.read(cx).value().to_string();
+        config.providers.fireworks.api_key =
+            self.fireworks_inputs.api_key.read(cx).value().to_string();
+        config.providers.fireworks.base_url =
+            self.fireworks_inputs.base_url.read(cx).value().to_string();
+        config.providers.elevenlabs.api_key =
+            self.elevenlabs_inputs.api_key.read(cx).value().to_string();
+        config.providers.elevenlabs.base_url =
+            self.elevenlabs_inputs.base_url.read(cx).value().to_string();
 
         config.dictation.system_prompt = self.default_prompt.read(cx).value().to_string();
 
@@ -618,6 +712,14 @@ mod tests {
             assert_eq!(
                 app.cerebras_inputs.base_url.read(cx).value().to_string(),
                 defaults.providers.cerebras.base_url,
+            );
+            assert_eq!(
+                app.fireworks_inputs.base_url.read(cx).value().to_string(),
+                defaults.providers.fireworks.base_url,
+            );
+            assert_eq!(
+                app.elevenlabs_inputs.base_url.read(cx).value().to_string(),
+                defaults.providers.elevenlabs.base_url,
             );
         });
     }

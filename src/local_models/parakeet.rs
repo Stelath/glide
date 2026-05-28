@@ -389,6 +389,11 @@ pub(super) fn set_download_state(id: &str, state: LocalModelInstallState) {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn set_parakeet_install_state_for_test(id: &str, state: LocalModelInstallState) {
+    set_download_state(id, state);
+}
+
 pub(super) fn clear_download_state(id: &str) {
     if let Ok(mut downloads) = DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new())).lock() {
         downloads.remove(id);

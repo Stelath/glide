@@ -33,6 +33,14 @@ done
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP="$ROOT/target/$PROFILE/Glide.app"
 HELPER_APP="$APP/Contents/Helpers/GlideAppleHelper.app"
+ENTITLEMENTS="$ROOT/macos/Glide.entitlements"
+APP_BUNDLE_ID="${GLIDE_APP_BUNDLE_ID:-com.ghenti.glide.mac}"
+APP_DISPLAY_NAME="${GLIDE_APP_DISPLAY_NAME:-Glide}"
+if [[ "$PROFILE" == "debug" ]]; then
+    APP_BUNDLE_ID="${GLIDE_APP_BUNDLE_ID:-com.ghenti.glide.mac.dev}"
+    APP_DISPLAY_NAME="${GLIDE_APP_DISPLAY_NAME:-Glide Dev}"
+fi
+HELPER_BUNDLE_ID="$APP_BUNDLE_ID.apple-helper"
 
 find_codesign_identity() {
     if [[ -n "$IDENTITY" ]]; then
@@ -104,10 +112,14 @@ if [[ -n "$HELPER" ]]; then
 </plist>
 PLIST
     fi
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $HELPER_BUNDLE_ID" "$HELPER_APP/Contents/Info.plist"
 fi
 
 # Info.plist
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $APP_BUNDLE_ID" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_DISPLAY_NAME" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_DISPLAY_NAME" "$APP/Contents/Info.plist"
 
 # Icon
 cp "$ROOT/assets/icons/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
@@ -121,12 +133,17 @@ if [[ "$SIGN_MODE" != "never" ]]; then
     if [[ -n "$IDENTITY" ]]; then
         echo "Signing Glide.app with: $IDENTITY"
         if [[ -f "$HELPER_APP/Contents/MacOS/GlideAppleHelper" ]]; then
-            codesign --force --timestamp --options runtime --sign "$IDENTITY" "$HELPER_APP"
+            codesign --force --timestamp --options runtime --sign "$IDENTITY" \
+                --identifier "$HELPER_BUNDLE_ID" \
+                "$HELPER_APP"
         fi
         codesign --force --timestamp --options runtime --sign "$IDENTITY" \
-            --identifier com.ghenti.glide.mac \
+            --entitlements "$ENTITLEMENTS" \
+            --identifier "$APP_BUNDLE_ID" \
             "$APP/Contents/MacOS/Glide"
-        codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP"
+        codesign --force --timestamp --options runtime --sign "$IDENTITY" \
+            --entitlements "$ENTITLEMENTS" \
+            "$APP"
     elif [[ -n "$TEAM_ID" ]]; then
         echo "Signing skipped: no valid code-signing identity found for Apple team $TEAM_ID." >&2
         echo "Apple Speech locale assets require a signed helper." >&2

@@ -1,4 +1,4 @@
-use std::{sync::Arc, thread};
+use std::{sync::Arc, thread, time::Instant};
 
 use tokio::runtime::Runtime;
 
@@ -7,6 +7,7 @@ use crate::{
     config::HotkeyTrigger,
     pipeline,
     state::{RuntimeStatus, SharedState},
+    trace::{TraceSession, attrs},
 };
 
 // macOS virtual keycodes for the trigger keys we care about.
@@ -260,9 +261,50 @@ fn handle_press(ctx: &mut TapContext) {
         return;
     }
 
+    let microphone_status = crate::permissions::microphone_authorization_status();
+    if microphone_status == crate::permissions::MicrophoneAuthorizationStatus::NotDetermined {
+        let requested_status = crate::permissions::request_microphone_access();
+        ctx.pressed = false;
+        ctx.shared
+            .set_overlay_phase(crate::state::OverlayPhase::Dismissed);
+        if requested_status.can_capture() {
+            ctx.shared.set_status(
+                RuntimeStatus::Idle,
+                "Microphone access granted. Press the dictation hotkey again to record.",
+            );
+        } else if let Some(message) = crate::permissions::microphone_access_error(requested_status)
+        {
+            ctx.shared.set_error(message);
+            if requested_status.is_denied_or_restricted() {
+                crate::permissions::open_microphone_settings();
+            }
+        }
+        return;
+    }
+
+    if !microphone_status.can_capture() {
+        ctx.pressed = false;
+        if let Some(message) = crate::permissions::microphone_access_error(microphone_status) {
+            ctx.shared.set_error(message);
+        } else {
+            ctx.shared.set_error("Microphone access is not available");
+        }
+        ctx.shared
+            .set_overlay_phase(crate::state::OverlayPhase::Dismissed);
+        if microphone_status.is_denied_or_restricted() {
+            crate::permissions::open_microphone_settings();
+        }
+        return;
+    }
+
     // Detect frontmost app before recording starts (before overlay could steal focus)
     let frontmost = crate::platform::frontmost_app_name();
-    ctx.shared.set_frontmost_app(frontmost);
+    ctx.shared.set_frontmost_app(frontmost.clone());
+    crate::prewarm::start_recording_prewarm(
+        ctx.shared.clone(),
+        ctx.runtime.clone(),
+        frontmost.clone(),
+    );
 
     let config = ctx.shared.config();
     match ctx.recorder.start(&config.audio) {
@@ -284,38 +326,88 @@ fn handle_press(ctx: &mut TapContext) {
 }
 
 fn handle_release(ctx: &mut TapContext) {
+    let release_started = Instant::now();
+    let trace = TraceSession::from_env("dictation");
+    trace.instant("hotkey_release");
     ctx.pressed = false;
 
     // Transition overlay to loading dots
-    ctx.shared
-        .set_overlay_phase(crate::state::OverlayPhase::Processing);
-    ctx.shared.set_live_audio(None);
+    trace.measure("hotkey_release_overlay_processing", || {
+        ctx.shared
+            .set_overlay_phase(crate::state::OverlayPhase::Processing)
+    });
+    trace.measure("hotkey_release_clear_live_audio", || {
+        ctx.shared.set_live_audio(None)
+    });
 
-    match ctx.recorder.stop() {
+    let stop_started = Instant::now();
+    let stop_result = if trace.is_enabled() {
+        ctx.recorder.stop_profiled(&trace)
+    } else {
+        ctx.recorder.stop()
+    };
+    trace.record("hotkey_release_recorder_stop", stop_started.elapsed());
+
+    match stop_result {
         Ok(audio) => {
-            ctx.shared
-                .set_status(RuntimeStatus::Processing, "Uploading audio");
+            trace.instant_with_attrs(
+                "hotkey_release_audio_ready",
+                attrs([
+                    ("sample_count", audio.sample_count.to_string()),
+                    ("byte_count", audio.bytes.len().to_string()),
+                ]),
+            );
+            trace.measure("hotkey_release_status_uploading", || {
+                ctx.shared
+                    .set_status(RuntimeStatus::Processing, "Uploading audio")
+            });
             let shared_clone = ctx.shared.clone();
-            let target_app = shared_clone.frontmost_app();
+            let target_app = trace.measure("hotkey_release_frontmost_app_snapshot", || {
+                shared_clone.frontmost_app()
+            });
+            trace.record_since("hotkey_release_to_task_spawn", release_started);
             ctx.runtime.spawn(async move {
-                match pipeline::process_recording(shared_clone.clone(), audio, target_app).await {
+                trace.record_since("hotkey_release_to_task_start", release_started);
+                match pipeline::process_recording(
+                    shared_clone.clone(),
+                    audio,
+                    target_app,
+                    trace.clone(),
+                    Some(release_started),
+                )
+                .await
+                {
                     Ok(()) => {
-                        shared_clone.set_overlay_phase(crate::state::OverlayPhase::Dismissed);
+                        trace.measure("hotkey_release_overlay_dismiss_success", || {
+                            shared_clone.set_overlay_phase(crate::state::OverlayPhase::Dismissed)
+                        });
                     }
                     Err(error) => {
+                        trace.instant_with_attrs(
+                            "pipeline_error",
+                            attrs([("message", error.to_string())]),
+                        );
                         eprintln!("pipeline error: {error:#}");
                         shared_clone.set_error(error.to_string());
-                        shared_clone.set_overlay_phase(crate::state::OverlayPhase::Dismissed);
+                        trace.measure("hotkey_release_overlay_dismiss_error", || {
+                            shared_clone.set_overlay_phase(crate::state::OverlayPhase::Dismissed)
+                        });
                     }
                 }
             });
         }
         Err(error) => {
+            trace.instant_with_attrs(
+                "hotkey_release_stop_error",
+                attrs([("message", error.to_string())]),
+            );
             eprintln!("recording stop error: {error:#}");
             ctx.shared
                 .set_error(format!("failed to finish recording: {error:#}"));
-            ctx.shared
-                .set_overlay_phase(crate::state::OverlayPhase::Dismissed);
+            trace.measure("hotkey_release_overlay_dismiss_stop_error", || {
+                ctx.shared
+                    .set_overlay_phase(crate::state::OverlayPhase::Dismissed)
+            });
         }
     }
 }

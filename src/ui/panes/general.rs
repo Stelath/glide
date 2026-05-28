@@ -379,7 +379,7 @@ impl SettingsApp {
         );
 
         // -- Permissions --
-        let perms = crate::permissions::check_all();
+        let perms = &self.permission_statuses;
         let mut perm_card = settings_card(cx);
         for (i, perm) in perms.iter().enumerate() {
             if i > 0 {

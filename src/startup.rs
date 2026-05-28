@@ -132,6 +132,7 @@ pub fn run() {
     shared.set_permission_hint(permissions::macos_permission_hint());
 
     let runtime = Arc::new(Runtime::new().expect("failed to start async runtime"));
+    crate::prewarm::start_app_prewarm(shared.clone(), runtime.clone());
 
     crate::platform::preload_app_icons();
     crate::model_catalog::fetch_all_models(&shared.snapshot().config.providers);
