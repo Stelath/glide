@@ -23,9 +23,11 @@ impl SettingsApp {
     ) -> impl IntoElement {
         let mut container = div().flex().flex_col().gap_2();
 
-        let remote_providers: [(Provider, &ProviderInputs); 3] = [
+        let remote_providers: [(Provider, &ProviderInputs); 5] = [
             (Provider::OpenAi, &self.openai_inputs),
             (Provider::Groq, &self.groq_inputs),
+            (Provider::Fireworks, &self.fireworks_inputs),
+            (Provider::ElevenLabs, &self.elevenlabs_inputs),
             (Provider::Cerebras, &self.cerebras_inputs),
         ];
 
@@ -118,8 +120,8 @@ impl SettingsApp {
         }
 
         container = container
-            .child(self.render_apple_local_provider_card(cx, 3))
-            .child(self.render_parakeet_provider_card(cx, 4));
+            .child(self.render_apple_local_provider_card(cx, 5))
+            .child(self.render_parakeet_provider_card(cx, 6));
 
         container
     }

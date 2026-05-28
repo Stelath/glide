@@ -45,6 +45,9 @@ impl GlideConfig {
         config.providers.openai.api_key = api_keys.get("openai").cloned().unwrap_or_default();
         config.providers.groq.api_key = api_keys.get("groq").cloned().unwrap_or_default();
         config.providers.cerebras.api_key = api_keys.get("cerebras").cloned().unwrap_or_default();
+        config.providers.fireworks.api_key = api_keys.get("fireworks").cloned().unwrap_or_default();
+        config.providers.elevenlabs.api_key =
+            api_keys.get("elevenlabs").cloned().unwrap_or_default();
         config.validate()?;
         Ok(config)
     }
@@ -475,7 +478,8 @@ impl Default for PasteConfig {
 
 const KEYRING_SERVICE: &str = "glide";
 const KEYRING_ACCOUNT: &str = "provider-api-keys";
-const REMOTE_PROVIDER_KEY_IDS: [&str; 3] = ["openai", "groq", "cerebras"];
+const REMOTE_PROVIDER_KEY_IDS: [&str; 5] =
+    ["openai", "groq", "cerebras", "fireworks", "elevenlabs"];
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ProviderKeyringPayload {
@@ -488,6 +492,12 @@ fn provider_keys_from_config(config: &GlideConfig) -> BTreeMap<String, String> {
     insert_provider_key(&mut keys, "openai", &config.providers.openai.api_key);
     insert_provider_key(&mut keys, "groq", &config.providers.groq.api_key);
     insert_provider_key(&mut keys, "cerebras", &config.providers.cerebras.api_key);
+    insert_provider_key(&mut keys, "fireworks", &config.providers.fireworks.api_key);
+    insert_provider_key(
+        &mut keys,
+        "elevenlabs",
+        &config.providers.elevenlabs.api_key,
+    );
     keys
 }
 
@@ -625,6 +635,8 @@ mod tests {
         config.providers.openai.api_key = "openai-key".to_string();
         config.providers.groq.api_key = "groq-key".to_string();
         config.providers.cerebras.api_key = "cerebras-key".to_string();
+        config.providers.fireworks.api_key = "fireworks-key".to_string();
+        config.providers.elevenlabs.api_key = "elevenlabs-key".to_string();
 
         let keys = provider_keys_from_config(&config);
         let payload = encode_provider_keys(&keys).unwrap();
@@ -633,6 +645,8 @@ mod tests {
         assert_eq!(decoded.get("openai").unwrap(), "openai-key");
         assert_eq!(decoded.get("groq").unwrap(), "groq-key");
         assert_eq!(decoded.get("cerebras").unwrap(), "cerebras-key");
+        assert_eq!(decoded.get("fireworks").unwrap(), "fireworks-key");
+        assert_eq!(decoded.get("elevenlabs").unwrap(), "elevenlabs-key");
     }
 
     #[test]
@@ -641,25 +655,31 @@ mod tests {
         keys.insert("openai".to_string(), "openai-key".to_string());
         keys.insert("groq".to_string(), "  ".to_string());
         keys.insert("cerebras".to_string(), "cerebras-key".to_string());
+        keys.insert("fireworks".to_string(), "fireworks-key".to_string());
+        keys.insert("elevenlabs".to_string(), "elevenlabs-key".to_string());
         keys.insert("other".to_string(), "other-key".to_string());
 
         let payload = encode_provider_keys(&keys).unwrap();
         let decoded = decode_provider_keys(&payload);
 
-        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded.len(), 4);
         assert_eq!(decoded.get("openai").unwrap(), "openai-key");
         assert_eq!(decoded.get("cerebras").unwrap(), "cerebras-key");
+        assert_eq!(decoded.get("fireworks").unwrap(), "fireworks-key");
+        assert_eq!(decoded.get("elevenlabs").unwrap(), "elevenlabs-key");
     }
 
     #[test]
     fn test_provider_key_payload_accepts_plain_map_shape() {
         let decoded = decode_provider_keys(
-            r#"{"openai":"openai-key","cerebras":"cerebras-key","other":"ignored"}"#,
+            r#"{"openai":"openai-key","cerebras":"cerebras-key","fireworks":"fireworks-key","elevenlabs":"elevenlabs-key","other":"ignored"}"#,
         );
 
-        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded.len(), 4);
         assert_eq!(decoded.get("openai").unwrap(), "openai-key");
         assert_eq!(decoded.get("cerebras").unwrap(), "cerebras-key");
+        assert_eq!(decoded.get("fireworks").unwrap(), "fireworks-key");
+        assert_eq!(decoded.get("elevenlabs").unwrap(), "elevenlabs-key");
     }
 
     #[test]
