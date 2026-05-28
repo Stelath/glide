@@ -74,6 +74,7 @@ pub struct PromptEvalOptions {
     pub candidates: Vec<PromptEvalCandidate>,
     pub runs: usize,
     pub timeout_secs: u64,
+    pub edit_prepass: bool,
     pub output: Option<PathBuf>,
 }
 
@@ -171,6 +172,7 @@ pub struct PromptEvalReport {
     pub suite_path: String,
     pub run_count: usize,
     pub timeout_seconds: u64,
+    pub edit_prepass: bool,
     pub candidates: Vec<PromptEvalCandidateReport>,
 }
 
@@ -518,6 +520,7 @@ fn parse_prompt_eval_args(mut args: VecDeque<String>) -> Result<PromptEvalOption
     let mut candidates = Vec::new();
     let mut runs = DEFAULT_PROMPT_EVAL_RUNS;
     let mut timeout_secs = DEFAULT_PROMPT_EVAL_TIMEOUT_SECS;
+    let mut edit_prepass = true;
     let mut output = None;
 
     while let Some(flag) = args.pop_front() {
@@ -532,6 +535,7 @@ fn parse_prompt_eval_args(mut args: VecDeque<String>) -> Result<PromptEvalOption
                 timeout_secs =
                     parse_u64(&take_value(&mut args, "--timeout-secs")?, "--timeout-secs")?
             }
+            "--no-edit-prepass" => edit_prepass = false,
             "--output" => output = Some(PathBuf::from(take_value(&mut args, "--output")?)),
             "-h" | "--help" => anyhow::bail!("{}", usage()),
             other => anyhow::bail!("unknown prompt-eval option '{other}'\n\n{}", usage()),
@@ -548,6 +552,7 @@ fn parse_prompt_eval_args(mut args: VecDeque<String>) -> Result<PromptEvalOption
         candidates,
         runs,
         timeout_secs,
+        edit_prepass,
         output,
     })
 }
@@ -760,11 +765,12 @@ fn run_prompt_eval(options: &PromptEvalOptions) -> Result<(PromptEvalReport, Pat
     let mut candidate_reports = Vec::new();
 
     eprintln!(
-        "prompt-eval: loaded {} case(s), {} candidate(s), {} run(s), {}s timeout per case",
+        "prompt-eval: loaded {} case(s), {} candidate(s), {} run(s), {}s timeout per case, edit prepass {}",
         cases.len(),
         options.candidates.len(),
         options.runs,
-        options.timeout_secs
+        options.timeout_secs,
+        if options.edit_prepass { "on" } else { "off" }
     );
 
     for (candidate_index, candidate) in options.candidates.iter().enumerate() {
@@ -821,6 +827,7 @@ fn run_prompt_eval(options: &PromptEvalOptions) -> Result<(PromptEvalReport, Pat
                             &CleanupContext {
                                 target_app: None,
                                 mode_hint: Some("general dictation".to_string()),
+                                apply_edit_preprocessing: options.edit_prepass,
                             },
                         ),
                     )
@@ -866,6 +873,7 @@ fn run_prompt_eval(options: &PromptEvalOptions) -> Result<(PromptEvalReport, Pat
         suite_path: options.suite.display().to_string(),
         run_count: options.runs,
         timeout_seconds: options.timeout_secs,
+        edit_prepass: options.edit_prepass,
         candidates: candidate_reports,
     };
     let path = write_prompt_eval_report(&report, options.output.as_deref())?;
@@ -1110,6 +1118,7 @@ fn run_flow_once(
                 &CleanupContext {
                     target_app: options.target_app.clone(),
                     mode_hint: Some("general dictation".to_string()),
+                    ..CleanupContext::default()
                 },
             ));
             collector.record("flow_llm_call", started.elapsed());
@@ -1774,7 +1783,7 @@ fn usage() -> &'static str {
   glide-bench stt --audio <wav> --provider <openai|groq|fireworks|elevenlabs|apple_local|parakeet> --model <id> [--runs N] [--warmups N] [--output path]
   glide-bench llm --text <text|@file|file> --provider <openai|groq|cerebras|fireworks|apple_local> --model <id> [--runs N] [--warmups N] [--output path]
   glide-bench flow --audio <wav> [--target-app name] [--style name|default] [--runs N] [--warmups N] [--paste|--no-paste] [--output path]
-  glide-bench prompt-eval --suite <jsonl> --candidate <provider:model> [--candidate <provider:model> ...] [--runs N] [--timeout-secs N] [--output path]
+  glide-bench prompt-eval --suite <jsonl> --candidate <provider:model> [--candidate <provider:model> ...] [--runs N] [--timeout-secs N] [--no-edit-prepass] [--output path]
   glide-bench compare --baseline <json> --candidate <json> [--fail-threshold percent]"
 }
 

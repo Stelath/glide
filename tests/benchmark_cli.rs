@@ -120,6 +120,7 @@ fn parses_prompt_eval_cli_command() {
         "2",
         "--timeout-secs",
         "15",
+        "--no-edit-prepass",
         "--output",
         "report.json",
     ])
@@ -141,6 +142,7 @@ fn parses_prompt_eval_cli_command() {
             );
             assert_eq!(options.runs, 2);
             assert_eq!(options.timeout_secs, 15);
+            assert!(!options.edit_prepass);
             assert_eq!(options.output.unwrap().to_string_lossy(), "report.json");
         }
         other => panic!("expected prompt-eval command, got {other:?}"),

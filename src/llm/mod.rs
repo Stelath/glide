@@ -14,10 +14,21 @@ pub(crate) use util::{
     strip_think_tags,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CleanupContext {
     pub target_app: Option<String>,
     pub mode_hint: Option<String>,
+    pub apply_edit_preprocessing: bool,
+}
+
+impl Default for CleanupContext {
+    fn default() -> Self {
+        Self {
+            target_app: None,
+            mode_hint: None,
+            apply_edit_preprocessing: true,
+        }
+    }
 }
 
 #[async_trait::async_trait]
