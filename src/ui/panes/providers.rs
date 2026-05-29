@@ -10,8 +10,8 @@ use gpui_component::{Icon, IconName};
 use crate::config::Provider;
 use crate::state::AppSnapshot;
 
-use super::super::helpers::*;
 use super::super::SettingsApp;
+use super::super::helpers::*;
 use super::local_models::*;
 
 impl SettingsApp {

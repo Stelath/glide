@@ -259,12 +259,7 @@ fn model_picker_trigger(id: &str, label: impl Into<String>) -> Button {
         .ghost()
         .small()
         .compact()
-        .child(
-            div()
-                .truncate()
-                .max_w(gpui::px(180.0))
-                .child(label.into()),
-        )
+        .child(div().truncate().max_w(gpui::px(180.0)).child(label.into()))
 }
 
 fn model_picker_panel(
@@ -295,10 +290,7 @@ fn model_picker_panel(
         )
 }
 
-fn model_dropdown_wrapper(
-    current_logo: Option<String>,
-    popover: impl IntoElement,
-) -> gpui::Div {
+fn model_dropdown_wrapper(current_logo: Option<String>, popover: impl IntoElement) -> gpui::Div {
     let mut wrapper = div()
         .flex()
         .items_center()
