@@ -233,6 +233,90 @@ pub(super) fn model_picker_item(
     row
 }
 
+fn filtered_models<'a>(
+    models: &'a [crate::model_catalog::ModelInfo],
+    query: &str,
+) -> Vec<&'a crate::model_catalog::ModelInfo> {
+    if query.is_empty() {
+        return models.iter().collect();
+    }
+
+    let mut scored: Vec<_> = models
+        .iter()
+        .filter_map(|model| {
+            let display = model_display_name(model);
+            let id_score = crate::platform::fuzzy_match(query, &model.id);
+            let display_score = crate::platform::fuzzy_match(query, &display);
+            id_score.or(display_score).map(|score| (model, score))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.into_iter().map(|(model, _)| model).collect()
+}
+
+fn model_picker_trigger(id: &str, label: impl Into<String>) -> Button {
+    Button::new(SharedString::from(format!("trigger-{id}")))
+        .ghost()
+        .small()
+        .compact()
+        .child(
+            div()
+                .truncate()
+                .max_w(gpui::px(180.0))
+                .child(label.into()),
+        )
+}
+
+fn model_picker_panel(
+    scroll_id: &'static str,
+    search_entity: &Entity<InputState>,
+    list: gpui::Div,
+    cx: &App,
+) -> gpui::Div {
+    div()
+        .w(gpui::px(280.0))
+        .max_h(gpui::px(300.0))
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .child(
+            div()
+                .p_2()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(Input::new(search_entity)),
+        )
+        .child(
+            div()
+                .id(SharedString::from(scroll_id))
+                .flex_1()
+                .overflow_y_scroll()
+                .child(list),
+        )
+}
+
+fn model_dropdown_wrapper(
+    current_logo: Option<String>,
+    popover: impl IntoElement,
+) -> gpui::Div {
+    let mut wrapper = div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .min_w_0()
+        .overflow_hidden();
+    if let Some(logo) = current_logo {
+        wrapper = wrapper.child(
+            img(crate::config::asset_path(&logo))
+                .w(gpui::px(16.0))
+                .h(gpui::px(16.0))
+                .rounded_sm()
+                .flex_shrink_0(),
+        );
+    }
+    wrapper.child(div().min_w_0().overflow_hidden().child(popover))
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ModelDropdownAction {
     pub id: &'static str,
@@ -265,38 +349,14 @@ pub(super) fn model_dropdown_button(
     let recommended = recommended_model.map(|s| s.to_string());
 
     let popover_id = SharedString::from(format!("model-picker-{id}"));
-
-    let trigger = Button::new(SharedString::from(format!("trigger-{id}")))
-        .ghost()
-        .small()
-        .compact()
-        .child(
-            div()
-                .truncate()
-                .max_w(gpui::px(180.0))
-                .child(current_display),
-        );
+    let trigger = model_picker_trigger(id, current_display);
 
     let popover = Popover::new(popover_id)
         .trigger(trigger)
         .content(move |_state, _window, cx| {
             let popover = cx.entity().clone();
             let query = search_entity.read(cx).value().to_string();
-            let filtered: Vec<_> = if query.is_empty() {
-                models.iter().collect()
-            } else {
-                let mut scored: Vec<_> = models
-                    .iter()
-                    .filter_map(|m| {
-                        let display = model_display_name(m);
-                        let id_score = crate::platform::fuzzy_match(&query, &m.id);
-                        let display_score = crate::platform::fuzzy_match(&query, &display);
-                        id_score.or(display_score).map(|s| (m, s))
-                    })
-                    .collect();
-                scored.sort_by(|a, b| b.1.cmp(&a.1));
-                scored.into_iter().map(|(m, _)| m).collect()
-            };
+            let filtered = filtered_models(&models, &query);
 
             let mut list = div().flex().flex_col().gap_0p5().p_1();
             if let Some(action) = action {
@@ -348,44 +408,10 @@ pub(super) fn model_dropdown_button(
                 ));
             }
 
-            div()
-                .w(gpui::px(280.0))
-                .max_h(gpui::px(300.0))
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .p_2()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .child(Input::new(&search_entity)),
-                )
-                .child(
-                    div()
-                        .id(SharedString::from("model-scroll"))
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .child(list),
-                )
+            model_picker_panel("model-scroll", &search_entity, list, cx)
         });
 
-    let mut wrapper = div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .min_w_0()
-        .overflow_hidden();
-    if let Some(ref logo) = current_logo {
-        wrapper = wrapper.child(
-            img(crate::config::asset_path(logo))
-                .w(gpui::px(16.0))
-                .h(gpui::px(16.0))
-                .rounded_sm()
-                .flex_shrink_0(),
-        );
-    }
-    wrapper.child(div().min_w_0().overflow_hidden().child(popover))
+    model_dropdown_wrapper(current_logo, popover)
 }
 
 #[cfg(test)]
@@ -398,7 +424,6 @@ mod tests {
             display_name: display_name.to_string(),
             provider: provider.to_string(),
             logo: String::new(),
-            local: false,
             installed: false,
         }
     }
@@ -466,38 +491,14 @@ pub(super) fn style_model_dropdown(
     let models = models.to_vec();
 
     let popover_id = SharedString::from(format!("model-picker-{id}"));
-
-    let trigger = Button::new(SharedString::from(format!("trigger-{id}")))
-        .ghost()
-        .small()
-        .compact()
-        .child(
-            div()
-                .truncate()
-                .max_w(gpui::px(180.0))
-                .child(current_display.to_string()),
-        );
+    let trigger = model_picker_trigger(id, current_display);
 
     let popover = Popover::new(popover_id)
         .trigger(trigger)
         .content(move |_state, _window, cx| {
             let popover = cx.entity().clone();
             let query = search_entity.read(cx).value().to_string();
-            let filtered: Vec<_> = if query.is_empty() {
-                models.iter().collect()
-            } else {
-                let mut scored: Vec<_> = models
-                    .iter()
-                    .filter_map(|m| {
-                        let display = model_display_name(m);
-                        let id_score = crate::platform::fuzzy_match(&query, &m.id);
-                        let display_score = crate::platform::fuzzy_match(&query, &display);
-                        id_score.or(display_score).map(|s| (m, s))
-                    })
-                    .collect();
-                scored.sort_by(|a, b| b.1.cmp(&a.1));
-                scored.into_iter().map(|(m, _)| m).collect()
-            };
+            let filtered = filtered_models(&models, &query);
 
             let shared_default = shared.clone();
             let popover_default = popover.clone();
@@ -564,42 +565,8 @@ pub(super) fn style_model_dropdown(
                 ));
             }
 
-            div()
-                .w(gpui::px(280.0))
-                .max_h(gpui::px(300.0))
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .p_2()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .child(Input::new(&search_entity)),
-                )
-                .child(
-                    div()
-                        .id(SharedString::from("style-model-scroll"))
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .child(list),
-                )
+            model_picker_panel("style-model-scroll", &search_entity, list, cx)
         });
 
-    let mut wrapper = div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .min_w_0()
-        .overflow_hidden();
-    if let Some(ref logo) = current_logo {
-        wrapper = wrapper.child(
-            img(crate::config::asset_path(logo))
-                .w(gpui::px(16.0))
-                .h(gpui::px(16.0))
-                .rounded_sm()
-                .flex_shrink_0(),
-        );
-    }
-    wrapper.child(div().min_w_0().overflow_hidden().child(popover))
+    model_dropdown_wrapper(current_logo, popover)
 }
