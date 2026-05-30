@@ -1,3 +1,8 @@
+//! Text cleanup: the second pipeline stage. Takes the raw transcript from
+//! [`crate::engines::stt`] and polishes it (grammar, punctuation, style prompt,
+//! removing filler). Same provider-trait-plus-factory shape as STT, but its
+//! input and output are both text.
+
 use anyhow::Result;
 
 use crate::{

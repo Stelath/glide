@@ -1,3 +1,8 @@
+//! Speech-to-text: the first pipeline stage. Turns recorded audio into a raw
+//! transcript. Mirrors the shape of [`crate::engines::llm`] (provider trait +
+//! factory) but takes audio and returns text, where LLM takes text and returns
+//! cleaned-up text.
+
 use anyhow::Result;
 
 use crate::{

@@ -1,3 +1,8 @@
+//! On-device model *asset management* — not an inference stage. Handles the
+//! lifecycle of local model files (download, install, validate, status,
+//! cancellation) for Apple Speech and Parakeet. The STT/LLM providers that run
+//! locally depend on this to know whether the files are present and ready.
+
 mod apple;
 mod parakeet;
 pub(crate) mod prewarm;
