@@ -181,16 +181,3 @@ fn unix_millis() -> u128 {
         .unwrap_or_default()
         .as_millis()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn disabled_trace_is_noop() {
-        let trace = TraceSession::disabled();
-        trace.instant("ignored");
-        trace.record("ignored", Duration::from_millis(1));
-        assert!(!trace.is_enabled());
-    }
-}

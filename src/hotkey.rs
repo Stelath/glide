@@ -438,80 +438,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_option_maps_to_alt_keycodes() {
-        assert!(is_trigger_keycode(
-            HotkeyTrigger::Option,
-            keycode::OPTION_LEFT
-        ));
-        assert!(is_trigger_keycode(
-            HotkeyTrigger::Option,
-            keycode::OPTION_RIGHT
-        ));
+    fn trigger_keycodes_match_expected_keys() {
+        let matching = [
+            (HotkeyTrigger::Option, keycode::OPTION_LEFT),
+            (HotkeyTrigger::Option, keycode::OPTION_RIGHT),
+            (HotkeyTrigger::CommandRight, keycode::COMMAND_RIGHT),
+            (HotkeyTrigger::F8, keycode::F8),
+            (HotkeyTrigger::F9, keycode::F9),
+            (HotkeyTrigger::F10, keycode::F10),
+        ];
+        for (trigger, keycode) in matching {
+            assert!(
+                is_trigger_keycode(trigger, keycode),
+                "{trigger:?}/{keycode}"
+            );
+        }
+
+        let non_matching = [
+            (HotkeyTrigger::F8, keycode::F9),
+            (HotkeyTrigger::Option, keycode::COMMAND_RIGHT),
+            (HotkeyTrigger::CommandRight, keycode::OPTION_LEFT),
+        ];
+        for (trigger, keycode) in non_matching {
+            assert!(
+                !is_trigger_keycode(trigger, keycode),
+                "{trigger:?}/{keycode}"
+            );
+        }
     }
 
     #[test]
-    fn test_command_right_maps() {
-        assert!(is_trigger_keycode(
-            HotkeyTrigger::CommandRight,
-            keycode::COMMAND_RIGHT
-        ));
-    }
+    fn modifier_keycodes_match_expected_flags() {
+        let matching = [
+            (keycode::OPTION_LEFT, flags::ALTERNATE),
+            (keycode::OPTION_RIGHT, flags::ALTERNATE),
+            (keycode::COMMAND_RIGHT, flags::COMMAND),
+            (55, flags::COMMAND),
+            (56, 0x00020000),
+            (60, 0x00020000),
+            (59, 0x00040000),
+            (62, 0x00040000),
+        ];
+        for (keycode, flags) in matching {
+            assert!(modifier_is_pressed(keycode, flags), "{keycode}/{flags}");
+        }
 
-    #[test]
-    fn test_f8_maps() {
-        assert!(is_trigger_keycode(HotkeyTrigger::F8, keycode::F8));
-    }
-
-    #[test]
-    fn test_f9_maps() {
-        assert!(is_trigger_keycode(HotkeyTrigger::F9, keycode::F9));
-    }
-
-    #[test]
-    fn test_f10_maps() {
-        assert!(is_trigger_keycode(HotkeyTrigger::F10, keycode::F10));
-    }
-
-    #[test]
-    fn test_wrong_key_returns_false() {
-        assert!(!is_trigger_keycode(HotkeyTrigger::F8, keycode::F9));
-        assert!(!is_trigger_keycode(
-            HotkeyTrigger::Option,
-            keycode::COMMAND_RIGHT
-        ));
-        assert!(!is_trigger_keycode(
-            HotkeyTrigger::CommandRight,
-            keycode::OPTION_LEFT
-        ));
-    }
-
-    #[test]
-    fn test_modifier_pressed_option() {
-        assert!(modifier_is_pressed(keycode::OPTION_LEFT, flags::ALTERNATE));
-        assert!(modifier_is_pressed(keycode::OPTION_RIGHT, flags::ALTERNATE));
-        assert!(!modifier_is_pressed(keycode::OPTION_LEFT, 0));
-        assert!(!modifier_is_pressed(keycode::OPTION_LEFT, flags::COMMAND));
-    }
-
-    #[test]
-    fn test_modifier_pressed_command() {
-        assert!(modifier_is_pressed(keycode::COMMAND_RIGHT, flags::COMMAND));
-        assert!(modifier_is_pressed(55, flags::COMMAND)); // Left Cmd
-        assert!(!modifier_is_pressed(keycode::COMMAND_RIGHT, 0));
-    }
-
-    #[test]
-    fn test_modifier_pressed_shift_and_control() {
-        assert!(modifier_is_pressed(56, 0x00020000)); // Left Shift
-        assert!(modifier_is_pressed(60, 0x00020000)); // Right Shift
-        assert!(modifier_is_pressed(59, 0x00040000)); // Left Ctrl
-        assert!(modifier_is_pressed(62, 0x00040000)); // Right Ctrl
-    }
-
-    #[test]
-    fn test_modifier_pressed_non_modifier_returns_false() {
-        assert!(!modifier_is_pressed(keycode::F8, flags::ALTERNATE));
-        assert!(!modifier_is_pressed(keycode::F9, flags::COMMAND));
-        assert!(!modifier_is_pressed(0, 0xFFFFFFFF)); // 'A' key
+        let non_matching = [
+            (keycode::OPTION_LEFT, 0),
+            (keycode::OPTION_LEFT, flags::COMMAND),
+            (keycode::COMMAND_RIGHT, 0),
+            (keycode::F8, flags::ALTERNATE),
+            (keycode::F9, flags::COMMAND),
+            (0, 0xFFFFFFFF),
+        ];
+        for (keycode, flags) in non_matching {
+            assert!(!modifier_is_pressed(keycode, flags), "{keycode}/{flags}");
+        }
     }
 }

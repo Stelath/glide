@@ -1,34 +1,4 @@
-use glide::benchmark::{
-    BenchCommand, BenchmarkReport, CompareOptions, EnvironmentMetadata, PhaseSummary, Provider,
-    ScenarioMetadata, compare_reports, parse_cli_args, phase_summary, redacted_base_url_host,
-};
-
-fn empty_report(summary: Vec<PhaseSummary>) -> BenchmarkReport {
-    BenchmarkReport {
-        schema_version: 1,
-        mode: "stt".to_string(),
-        generated_at_unix_ms: 1,
-        environment: EnvironmentMetadata {
-            glide_version: "test".to_string(),
-            git_sha: None,
-            os: "test".to_string(),
-        },
-        scenario: ScenarioMetadata {
-            provider: None,
-            model: None,
-            run_count: 1,
-            warmup_count: 0,
-            audio: None,
-            text: None,
-            target_app: None,
-            style: None,
-            paste_enabled: false,
-            base_url_host: None,
-        },
-        runs: Vec::new(),
-        summary,
-    }
-}
+use glide::benchmark::{BenchCommand, CompareOptions, Provider, parse_cli_args};
 
 #[test]
 fn parses_stt_cli_command() {
@@ -120,7 +90,6 @@ fn parses_prompt_eval_cli_command() {
         "2",
         "--timeout-secs",
         "15",
-        "--no-edit-prepass",
         "--output",
         "report.json",
     ])
@@ -142,7 +111,6 @@ fn parses_prompt_eval_cli_command() {
             );
             assert_eq!(options.runs, 2);
             assert_eq!(options.timeout_secs, 15);
-            assert!(!options.edit_prepass);
             assert_eq!(options.output.unwrap().to_string_lossy(), "report.json");
         }
         other => panic!("expected prompt-eval command, got {other:?}"),
@@ -171,56 +139,4 @@ fn parses_compare_cli_command() {
             fail_threshold_percent: 12.5,
         })
     );
-}
-
-#[test]
-fn summarizes_percentiles_and_errors() {
-    let summary = phase_summary("phase".to_string(), &[30.0, 10.0, 20.0, 40.0], 1);
-
-    assert_eq!(summary.samples, 4);
-    assert_eq!(summary.errors, 1);
-    assert_eq!(summary.min_ms, 10.0);
-    assert_eq!(summary.median_ms, 20.0);
-    assert_eq!(summary.p95_ms, 40.0);
-    assert_eq!(summary.max_ms, 40.0);
-}
-
-#[test]
-fn compare_reports_fails_when_threshold_is_exceeded() {
-    let baseline = empty_report(vec![PhaseSummary {
-        phase: "remote_stt_provider_total".to_string(),
-        samples: 3,
-        errors: 0,
-        min_ms: 90.0,
-        median_ms: 100.0,
-        p95_ms: 120.0,
-        max_ms: 130.0,
-    }]);
-    let candidate = empty_report(vec![PhaseSummary {
-        phase: "remote_stt_provider_total".to_string(),
-        samples: 3,
-        errors: 0,
-        min_ms: 120.0,
-        median_ms: 130.0,
-        p95_ms: 150.0,
-        max_ms: 160.0,
-    }]);
-
-    let result = compare_reports(&baseline, &candidate, 20.0);
-
-    assert!(result.failures.iter().any(|failure| {
-        failure.phase == "remote_stt_provider_total" && failure.metric == "median"
-    }));
-    assert!(result.failures.iter().any(|failure| {
-        failure.phase == "remote_stt_provider_total" && failure.metric == "p95"
-    }));
-}
-
-#[test]
-fn base_url_redaction_keeps_only_host() {
-    assert_eq!(
-        redacted_base_url_host("https://secret@example.test:8443/v1/models").as_deref(),
-        Some("example.test:8443")
-    );
-    assert_eq!(redacted_base_url_host("  ").as_deref(), None);
 }

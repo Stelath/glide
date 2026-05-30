@@ -300,50 +300,48 @@ mod tests {
     }
 
     #[test]
-    fn test_check_all_returns_three_permissions() {
+    fn test_check_all_returns_expected_permissions() {
         let statuses = check_all();
-        assert_eq!(statuses.len(), 3);
-        assert_eq!(statuses[0].name, "Microphone");
-        assert_eq!(statuses[1].name, "Accessibility");
-        assert_eq!(statuses[2].name, "Input Monitoring");
+        let names = statuses
+            .iter()
+            .map(|status| status.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Microphone", "Accessibility", "Input Monitoring"]);
     }
 
     #[test]
     fn test_microphone_authorization_status_mapping() {
-        assert_eq!(
-            MicrophoneAuthorizationStatus::from_raw(0),
-            MicrophoneAuthorizationStatus::NotDetermined
-        );
-        assert_eq!(
-            MicrophoneAuthorizationStatus::from_raw(1),
-            MicrophoneAuthorizationStatus::Restricted
-        );
-        assert_eq!(
-            MicrophoneAuthorizationStatus::from_raw(2),
-            MicrophoneAuthorizationStatus::Denied
-        );
-        assert_eq!(
-            MicrophoneAuthorizationStatus::from_raw(3),
-            MicrophoneAuthorizationStatus::Authorized
-        );
-        assert_eq!(
-            MicrophoneAuthorizationStatus::from_raw(99),
-            MicrophoneAuthorizationStatus::Unknown(99)
-        );
+        let cases = [
+            (0, MicrophoneAuthorizationStatus::NotDetermined),
+            (1, MicrophoneAuthorizationStatus::Restricted),
+            (2, MicrophoneAuthorizationStatus::Denied),
+            (3, MicrophoneAuthorizationStatus::Authorized),
+            (99, MicrophoneAuthorizationStatus::Unknown(99)),
+        ];
+
+        for (raw, status) in cases {
+            assert_eq!(MicrophoneAuthorizationStatus::from_raw(raw), status);
+        }
     }
 
     #[test]
-    fn test_microphone_denied_status_has_actionable_error() {
-        let message = microphone_access_error(MicrophoneAuthorizationStatus::Denied)
-            .expect("denied status should produce a message");
-        assert!(message.contains("Microphone access is denied"));
-        assert!(message.contains("System Settings"));
-    }
+    fn test_microphone_access_errors_are_actionable() {
+        let cases = [
+            (
+                MicrophoneAuthorizationStatus::Denied,
+                ["Microphone access is denied", "System Settings"],
+            ),
+            (
+                MicrophoneAuthorizationStatus::NotDetermined,
+                ["Microphone access has not been granted", "Choose Allow"],
+            ),
+        ];
 
-    #[test]
-    fn test_microphone_not_determined_has_prompt_error() {
-        let message = microphone_access_error(MicrophoneAuthorizationStatus::NotDetermined)
-            .expect("not determined status should produce a message");
-        assert!(message.contains("Choose Allow"));
+        for (status, snippets) in cases {
+            let message = microphone_access_error(status).expect("status should produce a message");
+            for snippet in snippets {
+                assert!(message.contains(snippet), "{message}");
+            }
+        }
     }
 }

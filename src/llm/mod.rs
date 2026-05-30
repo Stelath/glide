@@ -9,26 +9,12 @@ mod apple;
 mod openai;
 mod util;
 
-pub(crate) use util::{
-    build_cleanup_system_prompt, build_cleanup_user_prompt, prepare_cleanup_transcript,
-    strip_think_tags,
-};
+pub(crate) use util::{build_cleanup_system_prompt, build_cleanup_user_prompt, strip_think_tags};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CleanupContext {
     pub target_app: Option<String>,
     pub mode_hint: Option<String>,
-    pub apply_edit_preprocessing: bool,
-}
-
-impl Default for CleanupContext {
-    fn default() -> Self {
-        Self {
-            target_app: None,
-            mode_hint: None,
-            apply_edit_preprocessing: true,
-        }
-    }
 }
 
 #[async_trait::async_trait]

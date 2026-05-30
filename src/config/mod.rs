@@ -2,7 +2,7 @@ pub mod models;
 pub mod providers;
 
 pub use models::{DictationConfig, DictionaryConfig, ModelSelection, ReplacementRule, Style};
-pub use providers::{Provider, ProvidersConfig};
+pub use providers::{Provider, ProviderCredentials, ProvidersConfig};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -42,12 +42,13 @@ impl GlideConfig {
     pub fn load_or_create() -> Result<Self> {
         let mut config: Self = confy::load("glide", "config").unwrap_or_default();
         let api_keys = load_provider_keys_from_keyring();
-        config.providers.openai.api_key = api_keys.get("openai").cloned().unwrap_or_default();
-        config.providers.groq.api_key = api_keys.get("groq").cloned().unwrap_or_default();
-        config.providers.cerebras.api_key = api_keys.get("cerebras").cloned().unwrap_or_default();
-        config.providers.fireworks.api_key = api_keys.get("fireworks").cloned().unwrap_or_default();
-        config.providers.elevenlabs.api_key =
-            api_keys.get("elevenlabs").cloned().unwrap_or_default();
+        for provider in Provider::REMOTE {
+            let Some(key_id) = provider.key_id() else {
+                continue;
+            };
+            config.providers.credentials_for_mut(provider).api_key =
+                api_keys.get(key_id).cloned().unwrap_or_default();
+        }
         config.validate()?;
         Ok(config)
     }
@@ -478,8 +479,6 @@ impl Default for PasteConfig {
 
 const KEYRING_SERVICE: &str = "glide";
 const KEYRING_ACCOUNT: &str = "provider-api-keys";
-const REMOTE_PROVIDER_KEY_IDS: [&str; 5] =
-    ["openai", "groq", "cerebras", "fireworks", "elevenlabs"];
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ProviderKeyringPayload {
@@ -489,15 +488,12 @@ struct ProviderKeyringPayload {
 
 fn provider_keys_from_config(config: &GlideConfig) -> BTreeMap<String, String> {
     let mut keys = BTreeMap::new();
-    insert_provider_key(&mut keys, "openai", &config.providers.openai.api_key);
-    insert_provider_key(&mut keys, "groq", &config.providers.groq.api_key);
-    insert_provider_key(&mut keys, "cerebras", &config.providers.cerebras.api_key);
-    insert_provider_key(&mut keys, "fireworks", &config.providers.fireworks.api_key);
-    insert_provider_key(
-        &mut keys,
-        "elevenlabs",
-        &config.providers.elevenlabs.api_key,
-    );
+    for (provider, credentials) in config.providers.remote_credentials() {
+        let Some(key_id) = provider.key_id() else {
+            continue;
+        };
+        insert_provider_key(&mut keys, key_id, &credentials.api_key);
+    }
     keys
 }
 
@@ -556,164 +552,13 @@ fn decode_provider_keys(raw: &str) -> BTreeMap<String, String> {
         .or_else(|_| serde_json::from_str::<BTreeMap<String, String>>(raw))
         .unwrap_or_default()
         .into_iter()
-        .filter(|(provider, key)| {
-            REMOTE_PROVIDER_KEY_IDS.contains(&provider.as_str()) && !key.trim().is_empty()
+        .filter_map(|(provider, key)| {
+            let provider = Provider::from_key_id(&provider)?;
+            let key_id = provider.key_id()?;
+            (!key.trim().is_empty()).then(|| (key_id.to_string(), key))
         })
         .collect()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn test_default_config_is_valid() {
-        GlideConfig::default().validate().unwrap();
-    }
-
-    #[test]
-    fn test_validation_rejects_zero_sample_rate() {
-        let mut config = GlideConfig::default();
-        config.audio.sample_rate = 0;
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_validation_rejects_zero_channels() {
-        let mut config = GlideConfig::default();
-        config.audio.channels = 0;
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_validation_rejects_zero_overlay_dimensions() {
-        let mut config = GlideConfig::default();
-        config.overlay.width = 0;
-        assert!(config.validate().is_err());
-
-        let mut config = GlideConfig::default();
-        config.overlay.height = 0;
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_validation_rejects_bad_opacity() {
-        let mut config = GlideConfig::default();
-        config.overlay.opacity = 2.0;
-        assert!(config.validate().is_err());
-
-        config.overlay.opacity = -0.1;
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_serde_roundtrip() {
-        let config = GlideConfig::default();
-        let serialized = toml::to_string_pretty(&config).unwrap();
-        let parsed: GlideConfig = toml::from_str(&serialized).unwrap();
-        let reserialized = toml::to_string_pretty(&parsed).unwrap();
-        assert_eq!(serialized, reserialized);
-    }
-
-    #[test]
-    fn test_save_and_load_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        let config = GlideConfig::default();
-        let raw = toml::to_string_pretty(&config).unwrap();
-        fs::write(&path, &raw).unwrap();
-        let loaded: GlideConfig = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        loaded.validate().unwrap();
-        let loaded_raw = toml::to_string_pretty(&loaded).unwrap();
-        assert_eq!(raw, loaded_raw);
-    }
-
-    #[test]
-    fn test_provider_key_payload_roundtrip() {
-        let mut config = GlideConfig::default();
-        config.providers.openai.api_key = "openai-key".to_string();
-        config.providers.groq.api_key = "groq-key".to_string();
-        config.providers.cerebras.api_key = "cerebras-key".to_string();
-        config.providers.fireworks.api_key = "fireworks-key".to_string();
-        config.providers.elevenlabs.api_key = "elevenlabs-key".to_string();
-
-        let keys = provider_keys_from_config(&config);
-        let payload = encode_provider_keys(&keys).unwrap();
-        let decoded = decode_provider_keys(&payload);
-
-        assert_eq!(decoded.get("openai").unwrap(), "openai-key");
-        assert_eq!(decoded.get("groq").unwrap(), "groq-key");
-        assert_eq!(decoded.get("cerebras").unwrap(), "cerebras-key");
-        assert_eq!(decoded.get("fireworks").unwrap(), "fireworks-key");
-        assert_eq!(decoded.get("elevenlabs").unwrap(), "elevenlabs-key");
-    }
-
-    #[test]
-    fn test_provider_key_payload_omits_empty_and_unknown_keys() {
-        let mut keys = BTreeMap::new();
-        keys.insert("openai".to_string(), "openai-key".to_string());
-        keys.insert("groq".to_string(), "  ".to_string());
-        keys.insert("cerebras".to_string(), "cerebras-key".to_string());
-        keys.insert("fireworks".to_string(), "fireworks-key".to_string());
-        keys.insert("elevenlabs".to_string(), "elevenlabs-key".to_string());
-        keys.insert("other".to_string(), "other-key".to_string());
-
-        let payload = encode_provider_keys(&keys).unwrap();
-        let decoded = decode_provider_keys(&payload);
-
-        assert_eq!(decoded.len(), 4);
-        assert_eq!(decoded.get("openai").unwrap(), "openai-key");
-        assert_eq!(decoded.get("cerebras").unwrap(), "cerebras-key");
-        assert_eq!(decoded.get("fireworks").unwrap(), "fireworks-key");
-        assert_eq!(decoded.get("elevenlabs").unwrap(), "elevenlabs-key");
-    }
-
-    #[test]
-    fn test_provider_key_payload_accepts_plain_map_shape() {
-        let decoded = decode_provider_keys(
-            r#"{"openai":"openai-key","cerebras":"cerebras-key","fireworks":"fireworks-key","elevenlabs":"elevenlabs-key","other":"ignored"}"#,
-        );
-
-        assert_eq!(decoded.len(), 4);
-        assert_eq!(decoded.get("openai").unwrap(), "openai-key");
-        assert_eq!(decoded.get("cerebras").unwrap(), "cerebras-key");
-        assert_eq!(decoded.get("fireworks").unwrap(), "fireworks-key");
-        assert_eq!(decoded.get("elevenlabs").unwrap(), "elevenlabs-key");
-    }
-
-    #[test]
-    fn test_hotkey_trigger_labels() {
-        assert!(!HotkeyTrigger::Option.label().is_empty());
-        assert!(!HotkeyTrigger::CommandRight.label().is_empty());
-        assert!(!HotkeyTrigger::F8.label().is_empty());
-        assert!(!HotkeyTrigger::F9.label().is_empty());
-        assert!(!HotkeyTrigger::F10.label().is_empty());
-        assert!(!HotkeyTrigger::Custom(49).label().is_empty());
-    }
-
-    #[test]
-    fn test_hotkey_from_keycode() {
-        assert_eq!(HotkeyTrigger::from_keycode(100), HotkeyTrigger::F8);
-        assert_eq!(HotkeyTrigger::from_keycode(58), HotkeyTrigger::Custom(58));
-        assert_eq!(HotkeyTrigger::from_keycode(61), HotkeyTrigger::Custom(61));
-        assert_eq!(HotkeyTrigger::from_keycode(55), HotkeyTrigger::Custom(55));
-        assert_eq!(HotkeyTrigger::from_keycode(54), HotkeyTrigger::Custom(54));
-        assert_eq!(HotkeyTrigger::from_keycode(63), HotkeyTrigger::Custom(63));
-        assert_eq!(HotkeyTrigger::from_keycode(49), HotkeyTrigger::Custom(49));
-    }
-
-    #[test]
-    fn test_overlay_style_labels() {
-        assert_eq!(OverlayStyle::Classic.label(), "Classic");
-        assert_eq!(OverlayStyle::Glow.label(), "Glow");
-        assert_eq!(OverlayStyle::None.label(), "None");
-    }
-
-    #[test]
-    fn test_theme_preference_labels() {
-        for pref in ThemePreference::ALL {
-            assert!(!pref.label().is_empty());
-        }
-    }
-}
+mod tests;

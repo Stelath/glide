@@ -317,24 +317,16 @@ mod tests {
     }
 
     #[test]
-    fn test_config_readable() {
-        let state = make_state();
-        let config = state.config();
-        // Default config should have default values
-        assert_eq!(config.audio.sample_rate, 16_000);
-    }
-
-    #[test]
-    fn test_runtime_status_labels() {
+    fn test_runtime_status_labels_are_exact() {
         let statuses = [
-            RuntimeStatus::Starting,
-            RuntimeStatus::Idle,
-            RuntimeStatus::Recording,
-            RuntimeStatus::Processing,
-            RuntimeStatus::Error,
+            (RuntimeStatus::Starting, "Starting"),
+            (RuntimeStatus::Idle, "Idle"),
+            (RuntimeStatus::Recording, "Recording"),
+            (RuntimeStatus::Processing, "Processing"),
+            (RuntimeStatus::Error, "Error"),
         ];
-        for status in statuses {
-            assert!(!status.label().is_empty());
+        for (status, label) in statuses {
+            assert_eq!(status.label(), label);
         }
     }
 

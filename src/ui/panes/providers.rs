@@ -10,8 +10,8 @@ use gpui_component::{Icon, IconName};
 use crate::config::Provider;
 use crate::state::AppSnapshot;
 
+use super::super::SettingsApp;
 use super::super::helpers::*;
-use super::super::{ProviderInputs, SettingsApp};
 use super::local_models::*;
 
 impl SettingsApp {
@@ -23,21 +23,15 @@ impl SettingsApp {
     ) -> impl IntoElement {
         let mut container = div().flex().flex_col().gap_2();
 
-        let remote_providers: [(Provider, &ProviderInputs); 5] = [
-            (Provider::OpenAi, &self.openai_inputs),
-            (Provider::Groq, &self.groq_inputs),
-            (Provider::Fireworks, &self.fireworks_inputs),
-            (Provider::ElevenLabs, &self.elevenlabs_inputs),
-            (Provider::Cerebras, &self.cerebras_inputs),
-        ];
-
-        for (idx, (provider, inputs)) in remote_providers.iter().enumerate() {
-            let is_expanded = self.expanded_provider == Some(idx);
+        for provider in Provider::SETTINGS_REMOTE {
+            let inputs = self.provider_inputs_for(provider);
+            let is_expanded = self.expanded_provider == Some(provider);
             let logo_path = Some(crate::config::asset_path(provider.logo()));
+            let header_id = provider.key_id().unwrap_or(provider.label());
 
             let chevron = if is_expanded { "▼" } else { "▶" };
             let header = div()
-                .id(SharedString::from(format!("provider-header-{idx}")))
+                .id(SharedString::from(format!("provider-header-{header_id}")))
                 .flex()
                 .items_center()
                 .gap_3()
@@ -66,15 +60,15 @@ impl SettingsApp {
                         .child(provider.label()),
                 )
                 .on_click(cx.listener(move |this, _, _window, cx| {
-                    this.expanded_provider = if this.expanded_provider == Some(idx) {
+                    this.expanded_provider = if this.expanded_provider == Some(provider) {
                         None
                     } else {
-                        Some(idx)
+                        Some(provider)
                     };
                     cx.notify();
                 }));
 
-            let is_verified = crate::model_catalog::provider_verified(*provider);
+            let is_verified = crate::model_catalog::provider_verified(provider);
             let body = if is_expanded {
                 Some(
                     div()
@@ -120,19 +114,15 @@ impl SettingsApp {
         }
 
         container = container
-            .child(self.render_apple_local_provider_card(cx, 5))
-            .child(self.render_parakeet_provider_card(cx, 6));
+            .child(self.render_apple_local_provider_card(cx))
+            .child(self.render_parakeet_provider_card(cx));
 
         container
     }
 
-    fn render_apple_local_provider_card(
-        &self,
-        cx: &mut gpui::Context<Self>,
-        idx: usize,
-    ) -> impl IntoElement {
+    fn render_apple_local_provider_card(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let provider = Provider::AppleLocal;
-        let is_expanded = self.expanded_provider == Some(idx);
+        let is_expanded = self.expanded_provider == Some(provider);
         let caps = crate::apple_helper::cached_capabilities();
         let speech_statuses = crate::local_models::apple_speech_models_status();
         let foundation_statuses = crate::local_models::apple_foundation_models_status();
@@ -169,7 +159,7 @@ impl SettingsApp {
         let chevron = if is_expanded { "▼" } else { "▶" };
 
         let header = div()
-            .id(SharedString::from(format!("provider-header-{idx}")))
+            .id(SharedString::from("provider-header-apple-local"))
             .flex()
             .items_center()
             .gap_3()
@@ -205,13 +195,13 @@ impl SettingsApp {
                 this.child(header_status)
             })
             .on_click(cx.listener(move |this, _, _window, cx| {
-                if this.expanded_provider != Some(idx) {
+                if this.expanded_provider != Some(provider) {
                     crate::local_models::refresh_apple_local_models();
                 }
-                this.expanded_provider = if this.expanded_provider == Some(idx) {
+                this.expanded_provider = if this.expanded_provider == Some(provider) {
                     None
                 } else {
-                    Some(idx)
+                    Some(provider)
                 };
                 cx.notify();
             }));
@@ -398,13 +388,9 @@ impl SettingsApp {
             .when_some(body, |this, body| this.child(body))
     }
 
-    fn render_parakeet_provider_card(
-        &self,
-        cx: &mut gpui::Context<Self>,
-        idx: usize,
-    ) -> impl IntoElement {
+    fn render_parakeet_provider_card(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let provider = Provider::Parakeet;
-        let is_expanded = self.expanded_provider == Some(idx);
+        let is_expanded = self.expanded_provider == Some(provider);
         let statuses = crate::local_models::parakeet_models_status();
         let installed_count = statuses
             .iter()
@@ -490,7 +476,7 @@ impl SettingsApp {
         let chevron = if is_expanded { "▼" } else { "▶" };
 
         let header = div()
-            .id(SharedString::from(format!("provider-header-{idx}")))
+            .id(SharedString::from("provider-header-parakeet"))
             .flex()
             .items_center()
             .gap_3()
@@ -524,10 +510,10 @@ impl SettingsApp {
             .child(div().flex_1())
             .child(header_status)
             .on_click(cx.listener(move |this, _, _window, cx| {
-                this.expanded_provider = if this.expanded_provider == Some(idx) {
+                this.expanded_provider = if this.expanded_provider == Some(provider) {
                     None
                 } else {
-                    Some(idx)
+                    Some(provider)
                 };
                 cx.notify();
             }));

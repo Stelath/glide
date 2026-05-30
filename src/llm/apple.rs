@@ -23,11 +23,7 @@ impl AppleFoundationLlmProvider {
 #[async_trait::async_trait]
 impl super::LlmProvider for AppleFoundationLlmProvider {
     async fn clean(&self, raw_text: &str, context: &CleanupContext) -> Result<String> {
-        let raw_text = if context.apply_edit_preprocessing {
-            super::prepare_cleanup_transcript(raw_text)
-        } else {
-            raw_text.trim().to_string()
-        };
+        let raw_text = raw_text.trim().to_string();
         let model_id = self.model_id.clone();
         let system_prompt = self.system_prompt.clone();
         let context = context.clone();

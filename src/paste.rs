@@ -122,26 +122,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn restore_delay_preserves_safe_custom_delay() {
-        let config = PasteConfig {
-            restore_clipboard: true,
-            restore_delay_ms: 1_000,
-        };
+    fn restore_delay_preserves_safe_values_and_clamps_unsafe_values() {
+        let cases = [
+            (1_000, Duration::from_millis(1_000)),
+            (100, Duration::from_millis(MIN_RESTORE_DELAY_MS)),
+        ];
 
-        assert_eq!(restore_delay(&config), Duration::from_millis(1_000));
-    }
-
-    #[test]
-    fn restore_delay_clamps_unsafe_short_delay() {
-        let config = PasteConfig {
-            restore_clipboard: true,
-            restore_delay_ms: 100,
-        };
-
-        assert_eq!(
-            restore_delay(&config),
-            Duration::from_millis(MIN_RESTORE_DELAY_MS)
-        );
+        for (restore_delay_ms, expected) in cases {
+            let config = PasteConfig {
+                restore_clipboard: true,
+                restore_delay_ms,
+            };
+            assert_eq!(restore_delay(&config), expected);
+        }
     }
 
     #[test]

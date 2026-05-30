@@ -16,7 +16,7 @@ use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem, SidebarTogg
 use gpui_component::theme::{Theme, ThemeMode};
 use gpui_component::{Icon, IconName};
 
-use crate::config::{ColorAccent, GlideConfig, Style, ThemePreference};
+use crate::config::{ColorAccent, GlideConfig, Provider, Style, ThemePreference};
 use crate::permissions;
 use crate::state::SharedState;
 
@@ -53,6 +53,7 @@ enum SettingsPane {
 }
 
 struct ProviderInputs {
+    provider: Provider,
     api_key: Entity<InputState>,
     base_url: Entity<InputState>,
 }
@@ -74,12 +75,8 @@ pub struct SettingsApp {
     recording_hotkey: bool,
     recording_toggle_hotkey: bool,
 
-    openai_inputs: ProviderInputs,
-    groq_inputs: ProviderInputs,
-    cerebras_inputs: ProviderInputs,
-    fireworks_inputs: ProviderInputs,
-    elevenlabs_inputs: ProviderInputs,
-    expanded_provider: Option<usize>,
+    provider_inputs: Vec<ProviderInputs>,
+    expanded_provider: Option<Provider>,
     apple_speech_search: Entity<InputState>,
     expanded_style: Option<usize>,
     prompt_expanded: bool,
@@ -89,16 +86,7 @@ pub struct SettingsApp {
     default_llm_search: Entity<InputState>,
     styles: Vec<StyleInputs>,
 
-    last_fetched_openai_key: String,
-    last_fetched_groq_key: String,
-    last_fetched_cerebras_key: String,
-    last_fetched_fireworks_key: String,
-    last_fetched_elevenlabs_key: String,
-    last_fetched_openai_base_url: String,
-    last_fetched_groq_base_url: String,
-    last_fetched_cerebras_base_url: String,
-    last_fetched_fireworks_base_url: String,
-    last_fetched_elevenlabs_base_url: String,
+    last_fetched_providers: crate::config::ProvidersConfig,
 
     save_pending: bool,
 
@@ -126,51 +114,6 @@ impl SettingsApp {
     ) -> Self {
         let config = shared.snapshot().config;
 
-        let openai_creds = &config.providers.openai;
-        let openai_api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .default_value(&openai_creds.api_key)
-        });
-        let openai_base_url =
-            cx.new(|cx| InputState::new(window, cx).default_value(&openai_creds.base_url));
-
-        let groq_creds = &config.providers.groq;
-        let groq_api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .default_value(&groq_creds.api_key)
-        });
-        let groq_base_url =
-            cx.new(|cx| InputState::new(window, cx).default_value(&groq_creds.base_url));
-
-        let cerebras_creds = &config.providers.cerebras;
-        let cerebras_api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .default_value(&cerebras_creds.api_key)
-        });
-        let cerebras_base_url =
-            cx.new(|cx| InputState::new(window, cx).default_value(&cerebras_creds.base_url));
-
-        let fireworks_creds = &config.providers.fireworks;
-        let fireworks_api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .default_value(&fireworks_creds.api_key)
-        });
-        let fireworks_base_url =
-            cx.new(|cx| InputState::new(window, cx).default_value(&fireworks_creds.base_url));
-
-        let elevenlabs_creds = &config.providers.elevenlabs;
-        let elevenlabs_api_key = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .default_value(&elevenlabs_creds.api_key)
-        });
-        let elevenlabs_base_url =
-            cx.new(|cx| InputState::new(window, cx).default_value(&elevenlabs_creds.base_url));
-
         let default_prompt = cx.new(|cx| {
             InputState::new(window, cx)
                 .auto_grow(3, 12)
@@ -183,19 +126,20 @@ impl SettingsApp {
         let replacement_find_input = cx.new(|cx| InputState::new(window, cx));
         let replacement_replace_input = cx.new(|cx| InputState::new(window, cx));
 
-        let mut subs = vec![
-            cx.subscribe_in(&openai_api_key, window, Self::on_input_change),
-            cx.subscribe_in(&openai_base_url, window, Self::on_input_change),
-            cx.subscribe_in(&groq_api_key, window, Self::on_input_change),
-            cx.subscribe_in(&groq_base_url, window, Self::on_input_change),
-            cx.subscribe_in(&cerebras_api_key, window, Self::on_input_change),
-            cx.subscribe_in(&cerebras_base_url, window, Self::on_input_change),
-            cx.subscribe_in(&fireworks_api_key, window, Self::on_input_change),
-            cx.subscribe_in(&fireworks_base_url, window, Self::on_input_change),
-            cx.subscribe_in(&elevenlabs_api_key, window, Self::on_input_change),
-            cx.subscribe_in(&elevenlabs_base_url, window, Self::on_input_change),
-            cx.subscribe_in(&default_prompt, window, Self::on_input_change),
-        ];
+        let mut subs = vec![cx.subscribe_in(&default_prompt, window, Self::on_input_change)];
+        let provider_inputs = Provider::SETTINGS_REMOTE
+            .into_iter()
+            .map(|provider| {
+                let (inputs, provider_subs) = Self::create_provider_inputs(
+                    provider,
+                    config.providers.credentials_for(provider),
+                    window,
+                    cx,
+                );
+                subs.extend(provider_subs);
+                inputs
+            })
+            .collect();
 
         let styles: Vec<_> = config
             .dictation
@@ -245,27 +189,8 @@ impl SettingsApp {
             sidebar_collapsed: false,
             recording_hotkey: false,
             recording_toggle_hotkey: false,
-            openai_inputs: ProviderInputs {
-                api_key: openai_api_key,
-                base_url: openai_base_url,
-            },
-            groq_inputs: ProviderInputs {
-                api_key: groq_api_key,
-                base_url: groq_base_url,
-            },
-            cerebras_inputs: ProviderInputs {
-                api_key: cerebras_api_key,
-                base_url: cerebras_base_url,
-            },
-            fireworks_inputs: ProviderInputs {
-                api_key: fireworks_api_key,
-                base_url: fireworks_base_url,
-            },
-            elevenlabs_inputs: ProviderInputs {
-                api_key: elevenlabs_api_key,
-                base_url: elevenlabs_base_url,
-            },
-            expanded_provider: Some(0),
+            provider_inputs,
+            expanded_provider: Some(Provider::OpenAi),
             apple_speech_search,
             expanded_style: Some(0),
             prompt_expanded: false,
@@ -273,16 +198,7 @@ impl SettingsApp {
             default_stt_search,
             default_llm_search,
             styles,
-            last_fetched_openai_key: config.providers.openai.api_key.clone(),
-            last_fetched_groq_key: config.providers.groq.api_key.clone(),
-            last_fetched_cerebras_key: config.providers.cerebras.api_key.clone(),
-            last_fetched_fireworks_key: config.providers.fireworks.api_key.clone(),
-            last_fetched_elevenlabs_key: config.providers.elevenlabs.api_key.clone(),
-            last_fetched_openai_base_url: config.providers.openai.base_url.clone(),
-            last_fetched_groq_base_url: config.providers.groq.base_url.clone(),
-            last_fetched_cerebras_base_url: config.providers.cerebras.base_url.clone(),
-            last_fetched_fireworks_base_url: config.providers.fireworks.base_url.clone(),
-            last_fetched_elevenlabs_base_url: config.providers.elevenlabs.base_url.clone(),
+            last_fetched_providers: config.providers.clone(),
             save_pending: false,
             vocabulary_input,
             replacement_find_input,
@@ -295,6 +211,41 @@ impl SettingsApp {
             onboarding_recording_custom: false,
             _subscriptions: subs,
         }
+    }
+
+    fn create_provider_inputs(
+        provider: Provider,
+        credentials: &crate::config::ProviderCredentials,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> (ProviderInputs, Vec<Subscription>) {
+        let api_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .default_value(&credentials.api_key)
+        });
+        let base_url =
+            cx.new(|cx| InputState::new(window, cx).default_value(&credentials.base_url));
+        let subs = vec![
+            cx.subscribe_in(&api_key, window, Self::on_input_change),
+            cx.subscribe_in(&base_url, window, Self::on_input_change),
+        ];
+
+        (
+            ProviderInputs {
+                provider,
+                api_key,
+                base_url,
+            },
+            subs,
+        )
+    }
+
+    fn provider_inputs_for(&self, provider: Provider) -> &ProviderInputs {
+        self.provider_inputs
+            .iter()
+            .find(|inputs| inputs.provider == provider)
+            .expect("remote provider inputs should exist")
     }
 
     fn create_style_inputs(
@@ -396,39 +347,11 @@ impl SettingsApp {
 
     fn save(&mut self, cx: &gpui::Context<Self>) {
         let draft = self.draft_from_inputs(cx);
-        let new_openai_key = draft.providers.openai.api_key.clone();
-        let new_groq_key = draft.providers.groq.api_key.clone();
-        let new_cerebras_key = draft.providers.cerebras.api_key.clone();
-        let new_fireworks_key = draft.providers.fireworks.api_key.clone();
-        let new_elevenlabs_key = draft.providers.elevenlabs.api_key.clone();
-        let new_openai_base_url = draft.providers.openai.base_url.clone();
-        let new_groq_base_url = draft.providers.groq.base_url.clone();
-        let new_cerebras_base_url = draft.providers.cerebras.base_url.clone();
-        let new_fireworks_base_url = draft.providers.fireworks.base_url.clone();
-        let new_elevenlabs_base_url = draft.providers.elevenlabs.base_url.clone();
-        let providers_changed = new_openai_key != self.last_fetched_openai_key
-            || new_groq_key != self.last_fetched_groq_key
-            || new_cerebras_key != self.last_fetched_cerebras_key
-            || new_fireworks_key != self.last_fetched_fireworks_key
-            || new_elevenlabs_key != self.last_fetched_elevenlabs_key
-            || new_openai_base_url != self.last_fetched_openai_base_url
-            || new_groq_base_url != self.last_fetched_groq_base_url
-            || new_cerebras_base_url != self.last_fetched_cerebras_base_url
-            || new_fireworks_base_url != self.last_fetched_fireworks_base_url
-            || new_elevenlabs_base_url != self.last_fetched_elevenlabs_base_url;
+        let providers_changed = draft.providers != self.last_fetched_providers;
         let providers = draft.providers.clone();
         let _ = self.shared.update_config(move |config| *config = draft);
         if providers_changed {
-            self.last_fetched_openai_key = new_openai_key;
-            self.last_fetched_groq_key = new_groq_key;
-            self.last_fetched_cerebras_key = new_cerebras_key;
-            self.last_fetched_fireworks_key = new_fireworks_key;
-            self.last_fetched_elevenlabs_key = new_elevenlabs_key;
-            self.last_fetched_openai_base_url = new_openai_base_url;
-            self.last_fetched_groq_base_url = new_groq_base_url;
-            self.last_fetched_cerebras_base_url = new_cerebras_base_url;
-            self.last_fetched_fireworks_base_url = new_fireworks_base_url;
-            self.last_fetched_elevenlabs_base_url = new_elevenlabs_base_url;
+            self.last_fetched_providers = providers.clone();
             crate::model_catalog::fetch_all_models(&providers);
 
             let shared = self.shared.clone();
@@ -448,22 +371,11 @@ impl SettingsApp {
     fn draft_from_inputs(&self, cx: &gpui::Context<Self>) -> GlideConfig {
         let mut config = self.shared.snapshot().config;
 
-        config.providers.openai.api_key = self.openai_inputs.api_key.read(cx).value().to_string();
-        config.providers.openai.base_url = self.openai_inputs.base_url.read(cx).value().to_string();
-        config.providers.groq.api_key = self.groq_inputs.api_key.read(cx).value().to_string();
-        config.providers.groq.base_url = self.groq_inputs.base_url.read(cx).value().to_string();
-        config.providers.cerebras.api_key =
-            self.cerebras_inputs.api_key.read(cx).value().to_string();
-        config.providers.cerebras.base_url =
-            self.cerebras_inputs.base_url.read(cx).value().to_string();
-        config.providers.fireworks.api_key =
-            self.fireworks_inputs.api_key.read(cx).value().to_string();
-        config.providers.fireworks.base_url =
-            self.fireworks_inputs.base_url.read(cx).value().to_string();
-        config.providers.elevenlabs.api_key =
-            self.elevenlabs_inputs.api_key.read(cx).value().to_string();
-        config.providers.elevenlabs.base_url =
-            self.elevenlabs_inputs.base_url.read(cx).value().to_string();
+        for inputs in &self.provider_inputs {
+            let credentials = config.providers.credentials_for_mut(inputs.provider);
+            credentials.api_key = inputs.api_key.read(cx).value().to_string();
+            credentials.base_url = inputs.base_url.read(cx).value().to_string();
+        }
 
         config.dictation.system_prompt = self.default_prompt.read(cx).value().to_string();
 
@@ -646,416 +558,4 @@ impl Render for SettingsApp {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-
-    use gpui::{AppContext, TestAppContext, VisualTestContext};
-
-    use crate::config::{GlideConfig, ModelSelection, Provider};
-    use crate::state::SharedAppState;
-
-    fn test_shared_state() -> SharedState {
-        Arc::new(SharedAppState::new(GlideConfig::default()))
-    }
-
-    #[test]
-    fn test_disable_llm_rewrite_persists_disabled_default() {
-        let shared = test_shared_state();
-        shared
-            .update_config(|config| {
-                config.dictation.llm = Some(ModelSelection {
-                    provider: Provider::OpenAi,
-                    model: "gpt-5.4-nano".to_string(),
-                });
-                config.dictation.smart_defaults_applied = false;
-            })
-            .unwrap();
-
-        shared.update_config(helpers::disable_llm_rewrite).unwrap();
-
-        let config = shared.snapshot().config;
-        assert!(config.dictation.llm.is_none());
-        assert!(config.dictation.smart_defaults_applied);
-    }
-
-    fn init_and_create_view(cx: &mut TestAppContext) -> (Entity<SettingsApp>, VisualTestContext) {
-        cx.update(|app| {
-            gpui_component::init(app);
-        });
-
-        let shared = test_shared_state();
-        let (view, cx) = cx.add_window_view(|window, cx| SettingsApp::new(shared, window, cx));
-        let cx = cx.clone();
-        (view, cx)
-    }
-
-    #[gpui::test]
-    async fn test_settings_app_creation(cx: &mut TestAppContext) {
-        let (view, cx) = init_and_create_view(cx);
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.active_pane, SettingsPane::General);
-            assert!(!app.save_pending);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_input_default_values(cx: &mut TestAppContext) {
-        let (view, cx) = init_and_create_view(cx);
-        let defaults = GlideConfig::default();
-
-        cx.read_entity(&view, |app, cx| {
-            assert_eq!(
-                app.openai_inputs.base_url.read(cx).value().to_string(),
-                defaults.providers.openai.base_url,
-            );
-            assert_eq!(
-                app.cerebras_inputs.base_url.read(cx).value().to_string(),
-                defaults.providers.cerebras.base_url,
-            );
-            assert_eq!(
-                app.fireworks_inputs.base_url.read(cx).value().to_string(),
-                defaults.providers.fireworks.base_url,
-            );
-            assert_eq!(
-                app.elevenlabs_inputs.base_url.read(cx).value().to_string(),
-                defaults.providers.elevenlabs.base_url,
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_pane_switching(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-
-        cx.update_entity(&view, |app, cx| {
-            app.active_pane = SettingsPane::Styles;
-            cx.notify();
-        });
-
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.active_pane, SettingsPane::Styles);
-        });
-
-        cx.update_entity(&view, |app, cx| {
-            app.active_pane = SettingsPane::General;
-            cx.notify();
-        });
-
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.active_pane, SettingsPane::General);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_draft_from_inputs_matches_config(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let defaults = GlideConfig::default();
-
-        cx.update_entity(&view, |app, cx| {
-            let draft = app.draft_from_inputs(cx);
-            assert_eq!(
-                draft.providers.openai.base_url,
-                defaults.providers.openai.base_url,
-            );
-            assert_eq!(
-                draft.providers.cerebras.base_url,
-                defaults.providers.cerebras.base_url,
-            );
-            assert_eq!(
-                draft.dictation.system_prompt,
-                defaults.dictation.system_prompt
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_simulate_typing(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-
-        cx.simulate_input("hello");
-        cx.run_until_parked();
-
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.active_pane, SettingsPane::General);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_autosave_scheduling(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-
-        cx.update_entity(&view, |app, cx| {
-            app.schedule_autosave(cx);
-        });
-
-        cx.read_entity(&view, |app, _| {
-            assert!(app.save_pending);
-        });
-
-        cx.executor()
-            .advance_clock(AUTOSAVE_DELAY + std::time::Duration::from_millis(100));
-        cx.run_until_parked();
-
-        cx.read_entity(&view, |app, _| {
-            assert!(!app.save_pending);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_add_style(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-
-        let initial_count = cx.read_entity(&view, |app, _| app.styles.len());
-
-        cx.update(|window, cx| {
-            view.update(cx, |app, cx| {
-                let entry = Style {
-                    name: "TestApp".to_string(),
-                    apps: vec![],
-                    prompt: "test prompt".to_string(),
-                    stt: None,
-                    llm: None,
-                };
-                let (inputs, subs) = SettingsApp::create_style_inputs(&entry, window, cx);
-                app.styles.push(inputs);
-                app._subscriptions.extend(subs);
-                cx.notify();
-            });
-        });
-
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.styles.len(), initial_count + 1);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_remove_style(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-
-        let initial_count = cx.read_entity(&view, |app, _| app.styles.len());
-
-        cx.update(|window, cx| {
-            view.update(cx, |app, cx| {
-                for name in ["Extra1", "Extra2"] {
-                    let entry = Style {
-                        name: name.to_string(),
-                        apps: vec![],
-                        prompt: "prompt".to_string(),
-                        stt: None,
-                        llm: None,
-                    };
-                    let (inputs, subs) = SettingsApp::create_style_inputs(&entry, window, cx);
-                    app.styles.push(inputs);
-                    app._subscriptions.extend(subs);
-                }
-                cx.notify();
-            });
-        });
-
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.styles.len(), initial_count + 2);
-        });
-
-        cx.update_entity(&view, |app, cx| {
-            app.styles.remove(0);
-            cx.notify();
-        });
-
-        cx.read_entity(&view, |app, _| {
-            assert_eq!(app.styles.len(), initial_count + 1);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_input_replace_text_and_render(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_text_in_range(None, "test-text", window, cx);
-            });
-        });
-
-        cx.run_until_parked();
-
-        cx.read_entity(&input_entity, |state, _| {
-            assert!(state.value().to_string().contains("test-text"));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_masked_input_replace_text_and_render(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.api_key.clone());
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_text_in_range(None, "secret123", window, cx);
-            });
-        });
-
-        cx.run_until_parked();
-
-        cx.read_entity(&input_entity, |state, _| {
-            assert!(state.value().to_string().contains("secret123"));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_multiline_input_replace_text_and_render(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.default_prompt.clone());
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_text_in_range(None, "Line one\nLine two\nLine three", window, cx);
-            });
-        });
-
-        cx.run_until_parked();
-
-        cx.read_entity(&input_entity, |state, _| {
-            let val = state.value().to_string();
-            assert!(val.contains("Line one"));
-            assert!(val.contains("Line three"));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_rapid_typing_stress(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
-
-        for ch in "hello world, this is a longer sentence for stress testing".chars() {
-            cx.update(|window, cx| {
-                input_entity.update(cx, |state, cx| {
-                    use gpui::EntityInputHandler;
-                    state.replace_text_in_range(None, &ch.to_string(), window, cx);
-                });
-            });
-        }
-
-        cx.run_until_parked();
-
-        cx.read_entity(&input_entity, |state, _| {
-            assert!(state.value().to_string().contains("stress testing"));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_ime_marked_text_and_render(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_and_mark_text_in_range(None, "abc", Some(0..3), window, cx);
-            });
-        });
-
-        cx.run_until_parked();
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_text_in_range(None, "committed", window, cx);
-            });
-        });
-
-        cx.run_until_parked();
-
-        cx.read_entity(&input_entity, |state, _| {
-            assert!(state.value().to_string().contains("committed"));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_bounds_for_range_after_typing(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_text_in_range(None, "hello", window, cx);
-            });
-        });
-
-        cx.run_until_parked();
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                let bounds = gpui::Bounds {
-                    origin: gpui::point(gpui::px(0.), gpui::px(0.)),
-                    size: gpui::size(gpui::px(400.), gpui::px(30.)),
-                };
-                let _result = state.bounds_for_range(0..5, bounds, window, cx);
-            });
-        });
-    }
-
-    #[gpui::test]
-    async fn test_input_change_subscription_fires(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
-
-        cx.read_entity(&view, |app, _| {
-            assert!(!app.save_pending);
-        });
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_text_in_range(None, "x", window, cx);
-            });
-        });
-
-        cx.run_until_parked();
-
-        cx.read_entity(&view, |app, _| {
-            assert!(
-                app.save_pending,
-                "subscription should have triggered autosave"
-            );
-        });
-
-        cx.executor()
-            .advance_clock(AUTOSAVE_DELAY + std::time::Duration::from_millis(100));
-        cx.run_until_parked();
-
-        cx.read_entity(&view, |app, _| {
-            assert!(!app.save_pending, "autosave should have completed");
-        });
-    }
-
-    #[gpui::test]
-    async fn test_full_render_after_edit(cx: &mut TestAppContext) {
-        let (view, mut cx) = init_and_create_view(cx);
-        let input_entity = cx.read_entity(&view, |app, _| app.openai_inputs.base_url.clone());
-
-        cx.update(|window, cx| {
-            input_entity.update(cx, |state, cx| {
-                use gpui::EntityInputHandler;
-                state.replace_text_in_range(None, "gpt-4o", window, cx);
-            });
-        });
-
-        cx.update_entity(&view, |_, cx| {
-            cx.notify();
-        });
-
-        cx.run_until_parked();
-
-        cx.update_entity(&view, |app, cx| {
-            let draft = app.draft_from_inputs(cx);
-            assert!(!draft.providers.openai.base_url.is_empty());
-        });
-    }
-}
+mod tests;

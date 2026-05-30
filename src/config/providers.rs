@@ -14,7 +14,6 @@ pub enum Provider {
 }
 
 impl Provider {
-    #[allow(dead_code)]
     pub const ALL: [Self; 7] = [
         Self::OpenAi,
         Self::Groq,
@@ -31,6 +30,28 @@ impl Provider {
         Self::Fireworks,
         Self::ElevenLabs,
     ];
+    pub const SETTINGS_REMOTE: [Self; 5] = [
+        Self::OpenAi,
+        Self::Groq,
+        Self::Fireworks,
+        Self::ElevenLabs,
+        Self::Cerebras,
+    ];
+
+    pub fn key_id(self) -> Option<&'static str> {
+        match self {
+            Self::OpenAi => Some("openai"),
+            Self::Groq => Some("groq"),
+            Self::Cerebras => Some("cerebras"),
+            Self::Fireworks => Some("fireworks"),
+            Self::ElevenLabs => Some("elevenlabs"),
+            Self::AppleLocal | Self::Parakeet => None,
+        }
+    }
+
+    pub fn remote_index(self) -> Option<usize> {
+        Self::REMOTE.iter().position(|provider| *provider == self)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -108,9 +129,20 @@ impl Provider {
             _ => None,
         }
     }
+
+    pub fn from_key_id(s: &str) -> Option<Self> {
+        match s {
+            "openai" => Some(Self::OpenAi),
+            "groq" => Some(Self::Groq),
+            "cerebras" => Some(Self::Cerebras),
+            "fireworks" => Some(Self::Fireworks),
+            "elevenlabs" => Some(Self::ElevenLabs),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ProvidersConfig {
     pub openai: ProviderCredentials,
@@ -160,6 +192,25 @@ impl ProvidersConfig {
             }
         }
     }
+
+    pub fn credentials_for_mut(&mut self, provider: Provider) -> &mut ProviderCredentials {
+        match provider {
+            Provider::OpenAi => &mut self.openai,
+            Provider::Groq => &mut self.groq,
+            Provider::Cerebras => &mut self.cerebras,
+            Provider::Fireworks => &mut self.fireworks,
+            Provider::ElevenLabs => &mut self.elevenlabs,
+            Provider::AppleLocal | Provider::Parakeet => {
+                panic!("local providers do not use API credentials")
+            }
+        }
+    }
+
+    pub fn remote_credentials(&self) -> impl Iterator<Item = (Provider, &ProviderCredentials)> {
+        Provider::REMOTE
+            .into_iter()
+            .map(|provider| (provider, self.credentials_for(provider)))
+    }
 }
 
 fn fireworks_uses_default_inference_base(base: &str) -> bool {
@@ -170,7 +221,7 @@ fn fireworks_uses_default_inference_base(base: &str) -> bool {
         || trimmed.contains("api.fireworks.ai/inference")
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ProviderCredentials {
     #[serde(skip)]
@@ -184,5 +235,68 @@ impl ProviderCredentials {
             return Ok(self.api_key.trim().to_string());
         }
         anyhow::bail!("missing {label} API key; set it in Glide settings")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_metadata_is_stable() {
+        let cases = [
+            (Provider::OpenAi, "OpenAI", "https://api.openai.com/v1"),
+            (Provider::Groq, "Groq", "https://api.groq.com/openai/v1"),
+            (Provider::Cerebras, "Cerebras", "https://api.cerebras.ai/v1"),
+            (
+                Provider::Fireworks,
+                "Fireworks",
+                "https://api.fireworks.ai/inference/v1",
+            ),
+            (
+                Provider::ElevenLabs,
+                "ElevenLabs",
+                "https://api.elevenlabs.io/v1",
+            ),
+            (Provider::AppleLocal, "Apple Intelligence", ""),
+            (Provider::Parakeet, "Parakeet", ""),
+        ];
+
+        assert_eq!(Provider::ALL.len(), cases.len());
+        for (provider, label, base_url) in cases {
+            assert_eq!(provider.label(), label);
+            assert_eq!(provider.default_base_url(), base_url);
+        }
+        assert_eq!(
+            Provider::REMOTE
+                .into_iter()
+                .filter_map(Provider::key_id)
+                .collect::<Vec<_>>(),
+            ["openai", "groq", "cerebras", "fireworks", "elevenlabs"]
+        );
+    }
+
+    #[test]
+    fn fireworks_stt_turbo_uses_audio_turbo_endpoint() {
+        assert_eq!(
+            Provider::Fireworks
+                .stt_endpoint_for_model(Provider::Fireworks.default_base_url(), "whisper-v3-turbo"),
+            "https://audio-turbo.api.fireworks.ai/v1/audio/transcriptions"
+        );
+    }
+
+    #[test]
+    fn resolves_direct_api_key_and_rejects_missing_key() {
+        let creds = ProviderCredentials {
+            api_key: " direct-key ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(creds.resolve_api_key("test").unwrap(), "direct-key");
+
+        let missing = ProviderCredentials::default()
+            .resolve_api_key("test")
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("missing test API key"));
     }
 }

@@ -235,7 +235,6 @@ async fn process_recording_inner(
                 &CleanupContext {
                     target_app,
                     mode_hint: Some("general dictation".to_string()),
-                    ..CleanupContext::default()
                 },
             )
             .await

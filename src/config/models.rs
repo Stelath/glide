@@ -91,3 +91,40 @@ pub struct ReplacementRule {
     #[serde(default)]
     pub case_sensitive: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::DictationConfig;
+
+    #[test]
+    fn default_style_prompts_preserve_dictated_questions() {
+        let config = DictationConfig::default();
+        assert!(
+            config
+                .system_prompt
+                .contains("Preserve questions the speaker dictated")
+        );
+        assert!(
+            !config
+                .system_prompt
+                .contains("- No questions. No suggestions. No added content.")
+        );
+
+        for style in &config.styles {
+            assert!(
+                style
+                    .prompt
+                    .contains("Preserve questions the speaker dictated"),
+                "{} style should preserve dictated questions",
+                style.name
+            );
+            assert!(
+                !style
+                    .prompt
+                    .contains("- No questions. No suggestions. No added content."),
+                "{} style should not broadly forbid questions",
+                style.name
+            );
+        }
+    }
+}

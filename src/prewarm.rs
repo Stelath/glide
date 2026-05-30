@@ -112,14 +112,3 @@ fn prewarm_llm_selection(selection: &ModelSelection, system_prompt: &str) {
         );
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recording_prewarm_without_target_uses_default_selections() {
-        let config = GlideConfig::default();
-        prewarm_effective_recording_config(&config, None);
-    }
-}

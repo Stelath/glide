@@ -326,40 +326,41 @@ mod tests {
     }
 
     #[test]
-    fn test_push_frames_single_channel() {
-        let mut target = Vec::new();
-        let mut live = make_live();
-        push_frames(3, 1, |i| [0.5, -0.5, 0.0][i], &mut target, &mut live);
-        assert_eq!(target.len(), 3);
-        assert_eq!(target[0], (0.5f32 * i16::MAX as f32) as i16);
-        assert_eq!(target[1], (-0.5f32 * i16::MAX as f32) as i16);
-        assert_eq!(target[2], 0);
-        // Ring buffer should also have the samples
-        assert_eq!(live.write_pos, 3);
-        assert!((live.ring[0] - 0.5).abs() < 0.001);
+    fn push_frames_mixes_clamps_and_handles_empty_channels() {
+        let cases = [
+            (
+                vec![0.5, -0.5, 0.0],
+                1,
+                vec![
+                    (0.5f32 * i16::MAX as f32) as i16,
+                    (-(0.5f32 * i16::MAX as f32)) as i16,
+                    0,
+                ],
+            ),
+            (
+                vec![0.4, 0.6, 1.0, -1.0],
+                2,
+                vec![(0.5f32 * i16::MAX as f32) as i16, 0],
+            ),
+            (
+                vec![2.0, -2.0],
+                1,
+                vec![i16::MAX, (-(i16::MAX as f32)) as i16],
+            ),
+            (vec![0.0; 4], 0, Vec::new()),
+        ];
+
+        for (data, channels, expected) in cases {
+            let mut target = Vec::new();
+            let mut live = make_live();
+            push_frames(data.len(), channels, |i| data[i], &mut target, &mut live);
+            assert_eq!(target, expected);
+            assert_eq!(live.write_pos, expected.len());
+        }
     }
 
     #[test]
-    fn test_push_frames_stereo_averages() {
-        let mut target = Vec::new();
-        let mut live = make_live();
-        let data = [0.4f32, 0.6, 1.0, -1.0];
-        push_frames(4, 2, |i| data[i], &mut target, &mut live);
-        assert_eq!(target.len(), 2);
-        assert_eq!(target[0], (0.5f32 * i16::MAX as f32) as i16);
-        assert_eq!(target[1], 0);
-    }
-
-    #[test]
-    fn test_push_frames_zero_channels() {
-        let mut target = Vec::new();
-        let mut live = make_live();
-        push_frames(4, 0, |_| 0.0, &mut target, &mut live);
-        assert!(target.is_empty());
-    }
-
-    #[test]
-    fn test_push_i16_frames() {
+    fn sample_format_adapters_normalize_to_i16() {
         let target = Arc::new(Mutex::new(Vec::new()));
         let live = Arc::new(Mutex::new(make_live()));
         let data: Vec<i16> = vec![i16::MAX, i16::MIN];
@@ -368,10 +369,7 @@ mod tests {
         assert_eq!(samples.len(), 2);
         assert!(samples[0] > 0);
         assert!(samples[1] < 0);
-    }
 
-    #[test]
-    fn test_push_u16_frames() {
         let target = Arc::new(Mutex::new(Vec::new()));
         let live = Arc::new(Mutex::new(make_live()));
         let data: Vec<u16> = vec![u16::MAX / 2];
@@ -379,10 +377,7 @@ mod tests {
         let samples = target.lock().unwrap();
         assert_eq!(samples.len(), 1);
         assert!(samples[0].abs() < 1000);
-    }
 
-    #[test]
-    fn test_push_f32_frames() {
         let target = Arc::new(Mutex::new(Vec::new()));
         let live = Arc::new(Mutex::new(make_live()));
         let data: Vec<f32> = vec![0.0, 1.0, -1.0];
@@ -395,28 +390,18 @@ mod tests {
     }
 
     #[test]
-    fn test_push_frames_clamps() {
-        let mut target = Vec::new();
-        let mut live = make_live();
-        push_frames(2, 1, |i| [2.0f32, -2.0][i], &mut target, &mut live);
-        assert_eq!(target.len(), 2);
-        assert_eq!(target[0], i16::MAX);
-        assert_eq!(target[1], (-(i16::MAX as f32)) as i16);
-    }
-
-    #[test]
-    fn test_ring_buffer_wraps() {
+    fn ring_buffer_wraps() {
         let mut target = Vec::new();
         let mut live = LiveAudioData {
-            ring: vec![0.0; 4], // tiny ring for testing wrap
+            ring: vec![0.0; 4],
             write_pos: 0,
             sample_rate: 16000,
         };
-        // Write 6 samples into a ring of 4
+
         push_frames(6, 1, |_| 0.5, &mut target, &mut live);
+
         assert_eq!(live.write_pos, 6);
         assert_eq!(target.len(), 6);
-        // Positions 4 and 5 should have wrapped to indices 0 and 1
         assert!((live.ring[0] - 0.5).abs() < 0.001);
         assert!((live.ring[1] - 0.5).abs() < 0.001);
     }

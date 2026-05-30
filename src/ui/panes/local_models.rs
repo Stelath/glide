@@ -594,28 +594,30 @@ mod tests {
     use crate::local_models::LocalModelInstallState;
 
     #[test]
-    fn parakeet_row_x_action_cancels_download_or_deletes_installed_model() {
-        assert_eq!(
-            parakeet_row_action_kind(&LocalModelInstallState::Downloading {
-                downloaded_bytes: 512,
-                total_bytes: Some(1024),
-            }),
-            ParakeetRowActionKind::Cancel
-        );
-        assert_eq!(
-            parakeet_row_action_kind(&LocalModelInstallState::Installed { size_bytes: 4096 }),
-            ParakeetRowActionKind::Delete
-        );
-    }
+    fn parakeet_row_action_kind_matches_install_state() {
+        let cases = [
+            (
+                LocalModelInstallState::Downloading {
+                    downloaded_bytes: 512,
+                    total_bytes: Some(1024),
+                },
+                ParakeetRowActionKind::Cancel,
+            ),
+            (
+                LocalModelInstallState::Installed { size_bytes: 4096 },
+                ParakeetRowActionKind::Delete,
+            ),
+            (
+                LocalModelInstallState::Cancelling {
+                    downloaded_bytes: 512,
+                    total_bytes: Some(1024),
+                },
+                ParakeetRowActionKind::None,
+            ),
+        ];
 
-    #[test]
-    fn parakeet_row_has_no_x_action_while_cancelling() {
-        assert_eq!(
-            parakeet_row_action_kind(&LocalModelInstallState::Cancelling {
-                downloaded_bytes: 512,
-                total_bytes: Some(1024),
-            }),
-            ParakeetRowActionKind::None
-        );
+        for (state, expected) in cases {
+            assert_eq!(parakeet_row_action_kind(&state), expected);
+        }
     }
 }
