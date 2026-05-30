@@ -1,3 +1,4 @@
+mod about;
 mod helpers;
 pub(crate) mod onboarding;
 mod panes;
@@ -19,6 +20,8 @@ use gpui_component::{Icon, IconName};
 use crate::config::{ColorAccent, GlideConfig, Provider, Style, ThemePreference};
 use crate::permissions;
 use crate::state::SharedState;
+
+pub(crate) use about::AboutView;
 
 const AUTOSAVE_DELAY: Duration = Duration::from_millis(800);
 

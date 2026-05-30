@@ -1,32 +1,19 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyWindowHandle, App, AppContext, Application, Bounds, Context, Global, IntoElement,
-    KeyBinding, Menu, MenuItem, OsAction, ParentElement, Render, Styled, SystemMenuType, Window,
-    WindowBounds, WindowOptions, actions, div, img, point, px, size,
+    AnyWindowHandle, App, AppContext as _, Application, Bounds, Global, WindowBounds,
+    WindowOptions, point, px, size,
 };
-use gpui_component::{ActiveTheme, Root};
+use gpui_component::Root;
 use tokio::runtime::Runtime;
 
-use crate::{config::GlideConfig, hotkey, overlay, permissions, state::SharedAppState, ui};
-
-actions!(
-    glide,
-    [
-        Quit,
-        CloseWindow,
-        ShowSettings,
-        ShowAbout,
-        Minimize,
-        Zoom,
-        Undo,
-        Redo,
-        Cut,
-        Copy,
-        Paste,
-        SelectAll
-    ]
-);
+use crate::{
+    actions::{self, ShellActionHandlers},
+    config::GlideConfig,
+    hotkey, menu, overlay, permissions,
+    state::SharedAppState,
+    ui,
+};
 
 /// Tracks the settings window so we can reopen/close it specifically.
 struct SettingsWindowState {
@@ -66,43 +53,8 @@ fn ensure_settings_window(cx: &mut App) {
     }
 }
 
-struct AboutView;
-
-impl Render for AboutView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let accent = cx
-            .global::<SettingsWindowState>()
-            .shared
-            .config()
-            .app
-            .accent;
-        let icon_path = crate::platform::accent_icon_path(accent)
-            .unwrap_or_else(|| crate::config::asset_path("assets/icons/logo.svg"));
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .bg(cx.theme().background)
-            .gap(px(12.0))
-            .child(img(icon_path).w(px(80.0)).h(px(80.0)))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().foreground)
-                    .child("Glide"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
-            )
-    }
-}
-
 fn open_about_window(cx: &mut App) {
+    let shared = cx.global::<SettingsWindowState>().shared.clone();
     let _ = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -112,15 +64,25 @@ fn open_about_window(cx: &mut App) {
             is_resizable: false,
             ..Default::default()
         },
-        |window, cx| {
+        move |window, cx| {
             window.set_window_title("About Glide");
-            cx.new(|cx| {
-                let view = cx.new(|_| AboutView);
+            cx.new(move |cx| {
+                let view = cx.new(move |_| ui::AboutView::new(shared));
                 let any_view: gpui::AnyView = view.into();
                 Root::new(any_view, window, cx)
             })
         },
     );
+}
+
+fn close_settings_window(cx: &mut App) {
+    let handle = cx.global::<SettingsWindowState>().handle;
+    if let Some(handle) = handle {
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+            cx.global_mut::<SettingsWindowState>().handle = None;
+        });
+    }
 }
 
 pub fn run() {
@@ -157,77 +119,17 @@ pub fn run() {
         let snap = shared.snapshot();
         ui::apply_theme_preference(snap.config.app.theme, snap.config.app.accent, None, cx);
 
-        // --- Actions ---
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_action(|_: &CloseWindow, cx| {
-            let handle = cx.global::<SettingsWindowState>().handle;
-            if let Some(handle) = handle {
-                cx.defer(move |cx| {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                    cx.global_mut::<SettingsWindowState>().handle = None;
-                });
-            }
-        });
-        cx.on_action(|_: &ShowSettings, cx| ensure_settings_window(cx));
-        cx.on_action(|_: &ShowAbout, cx| open_about_window(cx));
-        cx.on_action(|_: &Minimize, cx| {
-            if let Some(stack) = cx.window_stack()
-                && let Some(window) = stack.into_iter().next()
-            {
-                let _ = window.update(cx, |_, window, _| window.minimize_window());
-            }
-        });
-        cx.on_action(|_: &Zoom, cx| {
-            if let Some(stack) = cx.window_stack()
-                && let Some(window) = stack.into_iter().next()
-            {
-                let _ = window.update(cx, |_, window, _| window.zoom_window());
-            }
-        });
-
-        // --- Key bindings ---
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-w", CloseWindow, None),
-            KeyBinding::new("cmd-m", Minimize, None),
-        ]);
-
-        // --- Menu bar ---
-        cx.set_menus(vec![
-            Menu {
-                name: "Glide".into(),
-                items: vec![
-                    MenuItem::action("About Glide", ShowAbout),
-                    MenuItem::separator(),
-                    MenuItem::os_submenu("Services", SystemMenuType::Services),
-                    MenuItem::separator(),
-                    MenuItem::action("Quit Glide", Quit),
-                ],
+        // --- Actions, key bindings, and menu bar ---
+        actions::register(
+            cx,
+            ShellActionHandlers {
+                close_window: close_settings_window,
+                show_settings: ensure_settings_window,
+                show_about: open_about_window,
             },
-            Menu {
-                name: "File".into(),
-                items: vec![MenuItem::action("Close Window", CloseWindow)],
-            },
-            Menu {
-                name: "Edit".into(),
-                items: vec![
-                    MenuItem::os_action("Undo", Undo, OsAction::Undo),
-                    MenuItem::os_action("Redo", Redo, OsAction::Redo),
-                    MenuItem::separator(),
-                    MenuItem::os_action("Cut", Cut, OsAction::Cut),
-                    MenuItem::os_action("Copy", Copy, OsAction::Copy),
-                    MenuItem::os_action("Paste", Paste, OsAction::Paste),
-                    MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
-                ],
-            },
-            Menu {
-                name: "Window".into(),
-                items: vec![
-                    MenuItem::action("Minimize", Minimize),
-                    MenuItem::action("Zoom", Zoom),
-                ],
-            },
-        ]);
+        );
+        actions::bind_keybindings(cx);
+        menu::install(cx);
 
         // --- Background services ---
         hotkey::start_listener(shared.clone(), runtime);

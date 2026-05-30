@@ -1,9 +1,11 @@
+mod actions;
 mod apple_helper;
 mod audio;
 mod config;
 mod hotkey;
 mod llm;
 mod local_models;
+mod menu;
 mod model_catalog;
 mod overlay;
 mod paste;
