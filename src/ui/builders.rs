@@ -86,6 +86,7 @@ impl SettingsApp {
         }
 
         config.dictation.system_prompt = self.default_prompt.read(cx).value().to_string();
+        config.dictation.sync_system_prompt_default_flag();
 
         let existing_styles = config.dictation.styles.clone();
         config.dictation.styles = self

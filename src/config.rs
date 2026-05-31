@@ -1,7 +1,10 @@
 pub mod models;
 pub mod providers;
 
-pub use models::{DictationConfig, DictionaryConfig, ModelSelection, ReplacementRule, Style};
+pub use models::{
+    DictationConfig, DictionaryConfig, ModelSelection, ReplacementRule, STYLE_PROMPT_PLACEHOLDER,
+    Style,
+};
 pub use providers::{Provider, ProviderCredentials, ProvidersConfig};
 
 use std::collections::BTreeMap;
@@ -49,6 +52,7 @@ impl GlideConfig {
     pub fn load_or_create() -> Result<Self> {
         let mut config: Self =
             confy::load(CONFIG_APP_NAME, CONFIG_NAME).context("failed to load Glide config")?;
+        config.dictation.refresh_builtin_prompt_defaults();
         let api_keys = load_provider_keys_from_keyring();
         for provider in Provider::REMOTE {
             let Some(key_id) = provider.key_id() else {

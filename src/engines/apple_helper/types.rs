@@ -104,8 +104,6 @@ pub(super) struct CleanupRequest<'a> {
     pub(super) model_id: &'a str,
     pub(super) raw_text: &'a str,
     pub(super) system_prompt: &'a str,
-    pub(super) target_app: Option<&'a str>,
-    pub(super) mode_hint: Option<&'a str>,
     pub(super) profile: bool,
 }
 

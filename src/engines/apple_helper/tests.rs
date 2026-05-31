@@ -16,8 +16,6 @@ fn encodes_helper_requests_as_camel_case() {
         model_id: "apple-foundation-default",
         raw_text: "hello",
         system_prompt: "clean",
-        target_app: None,
-        mode_hint: None,
         profile: true,
     };
     let json = serde_json::to_string(&cleanup).unwrap();
@@ -91,8 +89,6 @@ done
         model_id: "apple-foundation-default",
         raw_text: "hello",
         system_prompt: "clean",
-        target_app: None,
-        mode_hint: None,
         profile: false,
     };
     let input = serde_json::to_vec(&cleanup).unwrap();

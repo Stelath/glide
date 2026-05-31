@@ -41,7 +41,7 @@ fn prewarm_app_config(config: &GlideConfig) {
     prewarm_stt_selection(&config.dictation.stt);
 
     if let Some(llm) = &config.dictation.llm {
-        prewarm_llm_selection(llm, &config.dictation.system_prompt);
+        prewarm_llm_selection(llm, &config.dictation.system_prompt, None);
     }
 
     for style in &config.dictation.styles {
@@ -54,7 +54,7 @@ fn prewarm_app_config(config: &GlideConfig) {
 
         let effective_llm = style.llm.as_ref().or(config.dictation.llm.as_ref());
         if let Some(llm) = effective_llm {
-            prewarm_llm_selection(llm, &style.prompt);
+            prewarm_llm_selection(llm, &config.dictation.system_prompt, Some(&style.prompt));
         }
     }
 }
@@ -77,12 +77,12 @@ fn prewarm_effective_recording_config(config: &GlideConfig, target_app: Option<&
     let effective_llm = matched_style
         .and_then(|style| style.llm.as_ref())
         .or(config.dictation.llm.as_ref());
-    let system_prompt = matched_style
-        .map(|style| style.prompt.as_str())
-        .unwrap_or(&config.dictation.system_prompt);
-
     if let Some(llm) = effective_llm {
-        prewarm_llm_selection(llm, system_prompt);
+        prewarm_llm_selection(
+            llm,
+            &config.dictation.system_prompt,
+            matched_style.map(|style| style.prompt.as_str()),
+        );
     }
 }
 
@@ -99,12 +99,16 @@ fn prewarm_stt_selection(selection: &ModelSelection) {
     }
 }
 
-fn prewarm_llm_selection(selection: &ModelSelection, system_prompt: &str) {
+fn prewarm_llm_selection(
+    selection: &ModelSelection,
+    prompt_template: &str,
+    style_prompt: Option<&str>,
+) {
     if selection.provider != Provider::AppleLocal {
         return;
     }
 
-    let system_prompt = llm::build_cleanup_system_prompt(system_prompt);
+    let system_prompt = llm::build_cleanup_system_prompt(prompt_template, style_prompt);
     if let Err(error) = apple_helper::prewarm_foundation(&selection.model, &system_prompt) {
         eprintln!(
             "[glide] Apple Foundation prewarm failed for {}: {error:#}",

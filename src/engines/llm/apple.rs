@@ -2,8 +2,6 @@ use anyhow::Result;
 
 use crate::{engines::apple_helper, profile::ProfileCollector};
 
-use super::CleanupContext;
-
 pub struct AppleFoundationLlmProvider {
     model_id: String,
     system_prompt: String,
@@ -22,14 +20,13 @@ impl AppleFoundationLlmProvider {
 
 #[async_trait::async_trait]
 impl super::LlmProvider for AppleFoundationLlmProvider {
-    async fn clean(&self, raw_text: &str, context: &CleanupContext) -> Result<String> {
+    async fn clean(&self, raw_text: &str) -> Result<String> {
         let raw_text = raw_text.trim().to_string();
         let model_id = self.model_id.clone();
         let system_prompt = self.system_prompt.clone();
-        let context = context.clone();
         let profile = self.profile.clone();
         tokio::task::spawn_blocking(move || {
-            apple_helper::cleanup_profiled(&model_id, &raw_text, &system_prompt, &context, profile)
+            apple_helper::cleanup_profiled(&model_id, &raw_text, &system_prompt, profile)
         })
         .await?
     }

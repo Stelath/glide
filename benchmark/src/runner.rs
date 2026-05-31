@@ -9,8 +9,7 @@ use anyhow::{Context, Result};
 use glide_tools::ProfileCollector;
 
 use glide::benchmark_support::{
-    self as glide_core, AudioFormat, CleanupContext, GlideConfig, ModelSelection, RecordedAudio,
-    ReplacementRule,
+    self as glide_core, AudioFormat, GlideConfig, ModelSelection, RecordedAudio, ReplacementRule,
 };
 
 use super::{
@@ -217,7 +216,7 @@ fn run_llm_once(
         };
 
         let started = Instant::now();
-        let cleaned = runtime.block_on(provider.clean(text, &CleanupContext::default()));
+        let cleaned = runtime.block_on(provider.clean(text));
         collector.record("llm_call_total", started.elapsed());
         let cleaned = match cleaned {
             Ok(cleaned) => cleaned,
@@ -357,13 +356,7 @@ fn run_flow_once(
             };
 
             let started = Instant::now();
-            let cleaned = runtime.block_on(llm_provider.clean(
-                &raw_text,
-                &CleanupContext {
-                    target_app: options.target_app.clone(),
-                    mode_hint: Some("general dictation".to_string()),
-                },
-            ));
+            let cleaned = runtime.block_on(llm_provider.clean(&raw_text));
             collector.record("flow_llm_call", started.elapsed());
             match cleaned {
                 Ok(cleaned) => cleaned,

@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use glide::benchmark_support::{self as glide_core, CleanupContext, GlideConfig, LlmProvider};
+use glide::benchmark_support::{self as glide_core, GlideConfig, LlmProvider};
 
 use super::{
     REPORT_SCHEMA_VERSION,
@@ -87,13 +87,7 @@ pub(super) fn run_prompt_eval(options: &PromptEvalOptions) -> Result<(PromptEval
                 let output = runtime.block_on(async {
                     tokio::time::timeout(
                         Duration::from_secs(options.timeout_secs),
-                        provider.clean(
-                            &case.input,
-                            &CleanupContext {
-                                target_app: None,
-                                mode_hint: Some("general dictation".to_string()),
-                            },
-                        ),
+                        provider.clean(&case.input),
                     )
                     .await
                     .unwrap_or_else(|_| {

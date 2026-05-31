@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use crate::{engines::llm::CleanupContext, profile::ProfileCollector};
+use crate::profile::ProfileCollector;
 
 #[cfg(not(test))]
 use super::types::{AppleFoundationModel, AppleSpeechModel};
@@ -108,15 +108,12 @@ pub(crate) fn cleanup_profiled(
     model_id: &str,
     raw_text: &str,
     system_prompt: &str,
-    context: &CleanupContext,
     profile: ProfileCollector,
 ) -> Result<String> {
     let request = CleanupRequest {
         model_id,
         raw_text,
         system_prompt,
-        target_app: context.target_app.as_deref(),
-        mode_hint: context.mode_hint.as_deref(),
         profile: profile.is_enabled(),
     };
     let input =
@@ -141,8 +138,6 @@ pub(crate) fn prewarm_foundation(model_id: &str, system_prompt: &str) -> Result<
         model_id,
         raw_text: "",
         system_prompt,
-        target_app: None,
-        mode_hint: None,
         profile: false,
     };
     let input = serde_json::to_vec(&request)

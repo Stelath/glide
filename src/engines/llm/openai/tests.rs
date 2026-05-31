@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     config::{Provider, ProvidersConfig, providers::ProviderCredentials},
-    engines::llm::{CleanupContext, LlmProvider},
+    engines::llm::LlmProvider,
     profile::ProfileCollector,
 };
 use serde_json::Value;
@@ -30,16 +30,13 @@ async fn records_remote_provider_spans_with_mock_server() {
     let provider = OpenAiLlmProvider::new(
         Provider::OpenAi,
         "test-model",
-        &crate::engines::llm::build_cleanup_system_prompt("system"),
+        &crate::engines::llm::build_cleanup_system_prompt("system {{STYLE}}", Some("style")),
         &providers,
         profile.clone(),
     )
     .unwrap();
 
-    let cleaned = provider
-        .clean("raw text", &CleanupContext::default())
-        .await
-        .unwrap();
+    let cleaned = provider.clean("raw text").await.unwrap();
 
     assert_eq!(cleaned, "cleaned text");
     let phases = profile
@@ -54,11 +51,9 @@ async fn records_remote_provider_spans_with_mock_server() {
     let request = server.join();
     let body: Value = serde_json::from_str(request.split("\r\n\r\n").last().unwrap()).unwrap();
     assert_eq!(body["temperature"].as_f64(), Some(0.0));
-    assert!(
-        body["messages"][0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("CORE TASK:")
+    assert_eq!(
+        body["messages"][0]["content"].as_str(),
+        Some("system style")
     );
     assert!(
         body["messages"][1]["content"]
@@ -86,16 +81,13 @@ async fn omits_temperature_for_openai_reasoning_models() {
     let provider = OpenAiLlmProvider::new(
         Provider::OpenAi,
         "gpt-5.4-nano",
-        &crate::engines::llm::build_cleanup_system_prompt("system"),
+        &crate::engines::llm::build_cleanup_system_prompt("system", None),
         &providers,
         ProfileCollector::disabled(),
     )
     .unwrap();
 
-    provider
-        .clean("raw text", &CleanupContext::default())
-        .await
-        .unwrap();
+    provider.clean("raw text").await.unwrap();
 
     let request = server.join();
     let body: Value = serde_json::from_str(request.split("\r\n\r\n").last().unwrap()).unwrap();
@@ -115,15 +107,13 @@ async fn keeps_temperature_for_openai_compatible_providers() {
         let llm = OpenAiLlmProvider::new(
             provider,
             "test-model",
-            &crate::engines::llm::build_cleanup_system_prompt("system"),
+            &crate::engines::llm::build_cleanup_system_prompt("system", None),
             &providers,
             ProfileCollector::disabled(),
         )
         .unwrap();
 
-        llm.clean("raw text", &CleanupContext::default())
-            .await
-            .unwrap();
+        llm.clean("raw text").await.unwrap();
 
         let request = server.join();
         let body: Value = serde_json::from_str(request.split("\r\n\r\n").last().unwrap()).unwrap();
@@ -155,17 +145,13 @@ async fn preserves_error_status_and_body() {
         let provider = OpenAiLlmProvider::new(
             Provider::OpenAi,
             "gpt-4o-mini",
-            &crate::engines::llm::build_cleanup_system_prompt("system"),
+            &crate::engines::llm::build_cleanup_system_prompt("system", None),
             &providers,
             ProfileCollector::disabled(),
         )
         .unwrap();
 
-        let error = provider
-            .clean("raw text", &CleanupContext::default())
-            .await
-            .unwrap_err()
-            .to_string();
+        let error = provider.clean("raw text").await.unwrap_err().to_string();
 
         assert!(error.contains(expected_status), "{error}");
         assert!(error.contains("Unsupported value: temperature"), "{error}");

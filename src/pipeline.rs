@@ -7,7 +7,7 @@ use crate::{
     app::trace::{TraceSession, attrs},
     audio::RecordedAudio,
     config::ReplacementRule,
-    engines::llm::{self, CleanupContext},
+    engines::llm,
     engines::stt,
     platform::paste,
     profile::ProfileCollector,
@@ -144,9 +144,8 @@ async fn process_recording_inner(
     let llm_sel = matched_style
         .and_then(|s| s.llm.as_ref())
         .or(config.dictation.llm.as_ref());
-    let system_prompt = matched_style
-        .map(|s| s.prompt.as_str())
-        .unwrap_or(&config.dictation.system_prompt);
+    let prompt_template = config.dictation.system_prompt.as_str();
+    let style_prompt = matched_style.map(|s| s.prompt.as_str());
 
     let cleaned_text = if let Some(llm) = llm_sel {
         trace.instant_with_attrs(
@@ -165,7 +164,8 @@ async fn process_recording_inner(
         let llm_provider = llm::build_profiled_provider(
             llm.provider,
             &llm.model,
-            system_prompt,
+            prompt_template,
+            style_prompt,
             &config.providers,
             llm_profile.clone(),
         )
@@ -183,13 +183,7 @@ async fn process_recording_inner(
         }
         let llm_started = Instant::now();
         let cleaned = llm_provider
-            .clean(
-                &raw_text,
-                &CleanupContext {
-                    target_app,
-                    mode_hint: Some("general dictation".to_string()),
-                },
-            )
+            .clean(&raw_text)
             .await
             .with_context(|| format!("{llm_name} cleanup failed"));
         trace.record("pipeline_llm_call", llm_started.elapsed());

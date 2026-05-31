@@ -51,7 +51,7 @@ impl SettingsApp {
                     .text_color(cx.theme().muted_foreground)
                     .child(prompt_chevron),
             )
-            .child(field_label("System Prompt", cx))
+            .child(field_label("Prompt Template", cx))
             .on_click(cx.listener(|this, _, _window, cx| {
                 this.prompt_expanded = !this.prompt_expanded;
                 cx.notify();
@@ -60,10 +60,7 @@ impl SettingsApp {
         container = container.child(
             section_block("Defaults", cx).child(
                 settings_card(cx)
-                    .child(hint_row(
-                        "Used for all applications unless a style overrides it.",
-                        cx,
-                    ))
+                    .child(hint_row("Used for all applications.", cx))
                     .child(prompt_header)
                     .when(prompt_expanded, |this| {
                         this.child(Input::new(&default_prompt_entity))
@@ -395,7 +392,7 @@ impl SettingsApp {
                             .text_color(cx.theme().muted_foreground)
                             .child(style_prompt_chevron),
                     )
-                    .child(field_label("System Prompt", cx))
+                    .child(field_label("Style Prompt", cx))
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         if let Some(style) = this.styles.get_mut(index) {
                             style.prompt_expanded = !style.prompt_expanded;
@@ -497,12 +494,11 @@ impl SettingsApp {
                     .label("+ Add Style")
                     .primary()
                     .on_click(cx.listener(|this, _, window, cx| {
-                        let default_prompt = this.default_prompt.read(cx).value().to_string();
                         let style_num = this.styles.len() + 1;
                         let entry = Style {
                             name: format!("Style {style_num}"),
                             apps: Vec::new(),
-                            prompt: default_prompt,
+                            prompt: String::new(),
                             stt: None,
                             llm: None,
                         };

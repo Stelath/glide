@@ -7,7 +7,7 @@ use crate::{
     profile::ProfileCollector,
 };
 
-use super::{CleanupContext, build_cleanup_user_prompt};
+use super::build_cleanup_user_prompt;
 
 pub struct OpenAiLlmProvider {
     client: Client,
@@ -68,10 +68,10 @@ struct ChatChoice {
 
 #[async_trait::async_trait]
 impl super::LlmProvider for OpenAiLlmProvider {
-    async fn clean(&self, raw_text: &str, context: &CleanupContext) -> Result<String> {
+    async fn clean(&self, raw_text: &str) -> Result<String> {
         let total_started = std::time::Instant::now();
         let request_started = std::time::Instant::now();
-        let user_prompt = build_cleanup_user_prompt(raw_text, context);
+        let user_prompt = build_cleanup_user_prompt(raw_text);
 
         let request = ChatCompletionRequest {
             model: self.model.clone(),
@@ -151,6 +151,8 @@ impl super::LlmProvider for OpenAiLlmProvider {
 
 const ERROR_BODY_CHAR_LIMIT: usize = 4096;
 
+// We use a deterministic temperature (0.0) for models that support it, however
+// I'm not sure if this is the best approach; this needs to be benchmarked.
 fn deterministic_temperature(provider: Provider, model: &str) -> Option<f32> {
     if provider == Provider::OpenAi && openai_model_rejects_temperature_zero(model) {
         None
