@@ -1,7 +1,5 @@
 use std::ffi::{c_char, c_void};
 
-// --- macOS permission FFI ---
-
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
@@ -27,8 +25,6 @@ unsafe extern "C" {
 unsafe extern "C" {
     fn CGPreflightListenEventAccess() -> bool;
 }
-
-// --- Microphone permission backend ---
 
 #[cfg(target_os = "macos")]
 mod microphone {
@@ -122,8 +118,6 @@ mod microphone {
     }
 }
 
-// --- Permission settings ---
-
 pub const MICROPHONE_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
 pub const ACCESSIBILITY_SETTINGS_URL: &str =
@@ -163,8 +157,6 @@ impl MicrophoneAuthorizationStatus {
         matches!(self, Self::Authorized)
     }
 }
-
-// --- Permission checks ---
 
 /// Check if the app has Accessibility permission (needed for simulated paste via CoreGraphics).
 pub fn has_accessibility_access() -> bool {
@@ -230,15 +222,11 @@ pub fn microphone_access_error(status: MicrophoneAuthorizationStatus) -> Option<
 }
 
 pub fn open_microphone_settings() {
-    let _ = std::process::Command::new("open")
-        .arg(MICROPHONE_SETTINGS_URL)
-        .spawn();
+    open_settings_url(MICROPHONE_SETTINGS_URL);
 }
 
 pub fn open_accessibility_settings() {
-    let _ = std::process::Command::new("open")
-        .arg(ACCESSIBILITY_SETTINGS_URL)
-        .spawn();
+    open_settings_url(ACCESSIBILITY_SETTINGS_URL);
 }
 
 pub fn request_accessibility_access_or_open_settings() -> bool {
@@ -250,6 +238,10 @@ pub fn request_accessibility_access_or_open_settings() -> bool {
     false
 }
 
+fn open_settings_url(url: &str) {
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+
 #[cfg(not(target_os = "macos"))]
 fn cpal_microphone_access() -> bool {
     use cpal::traits::{DeviceTrait, HostTrait};
@@ -259,8 +251,6 @@ fn cpal_microphone_access() -> bool {
         None => false,
     }
 }
-
-// --- UI status ---
 
 /// Permission status for display in the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,28 +266,44 @@ pub struct PermissionStatus {
 /// Check all required permissions and return their statuses.
 pub fn check_all() -> Vec<PermissionStatus> {
     vec![
-        PermissionStatus {
-            name: "Microphone",
-            description: "Capture audio for dictation",
-            granted: has_microphone_access(),
-            settings_url: MICROPHONE_SETTINGS_URL,
-            icon: "bell", // closest to audio/mic in the icon pack
-        },
-        PermissionStatus {
-            name: "Accessibility",
-            description: "Paste transcribed text",
-            granted: has_accessibility_access(),
-            settings_url: ACCESSIBILITY_SETTINGS_URL,
-            icon: "user",
-        },
-        PermissionStatus {
-            name: "Input Monitoring",
-            description: "Global hotkey detection",
-            granted: has_input_monitoring_access(),
-            settings_url: INPUT_MONITORING_SETTINGS_URL,
-            icon: "eye",
-        },
+        permission_status(
+            "Microphone",
+            "Capture audio for dictation",
+            has_microphone_access(),
+            MICROPHONE_SETTINGS_URL,
+            "bell",
+        ),
+        permission_status(
+            "Accessibility",
+            "Paste transcribed text",
+            has_accessibility_access(),
+            ACCESSIBILITY_SETTINGS_URL,
+            "user",
+        ),
+        permission_status(
+            "Input Monitoring",
+            "Global hotkey detection",
+            has_input_monitoring_access(),
+            INPUT_MONITORING_SETTINGS_URL,
+            "eye",
+        ),
     ]
+}
+
+fn permission_status(
+    name: &'static str,
+    description: &'static str,
+    granted: bool,
+    settings_url: &'static str,
+    icon: &'static str,
+) -> PermissionStatus {
+    PermissionStatus {
+        name,
+        description,
+        granted,
+        settings_url,
+        icon,
+    }
 }
 
 #[cfg(test)]

@@ -11,8 +11,6 @@ use crate::config::PasteConfig;
 const CLIPBOARD_SETTLE_DELAY_MS: u64 = 50;
 const MIN_RESTORE_DELAY_MS: u64 = 750;
 
-// --- CoreGraphics FFI ---
-
 type CGEventRef = *mut std::ffi::c_void;
 type CGEventSourceRef = *mut std::ffi::c_void;
 
@@ -36,8 +34,6 @@ unsafe extern "C" {
     fn CFRelease(cf: *const std::ffi::c_void);
 }
 
-// --- Paste entry point ---
-
 pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
     anyhow::ensure!(
         crate::platform::permissions::has_accessibility_access(),
@@ -46,15 +42,9 @@ pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
     );
 
     let mut clipboard = Clipboard::new().context("failed to access clipboard")?;
-    let previous_text = if config.restore_clipboard {
-        clipboard.get_text().ok()
-    } else {
-        None
-    };
+    let previous_text = previous_clipboard_text(&mut clipboard, config);
 
-    clipboard
-        .set_text(text.to_string())
-        .context("failed to update clipboard")?;
+    set_clipboard_text(&mut clipboard, text.to_string()).context("failed to update clipboard")?;
 
     thread::sleep(Duration::from_millis(CLIPBOARD_SETTLE_DELAY_MS));
     simulate_paste();
@@ -66,22 +56,31 @@ pub fn paste_text(text: &str, config: &PasteConfig) -> Result<()> {
     Ok(())
 }
 
-// --- Paste helpers ---
+fn previous_clipboard_text(clipboard: &mut Clipboard, config: &PasteConfig) -> Option<String> {
+    config
+        .restore_clipboard
+        .then(|| clipboard.get_text().ok())
+        .flatten()
+}
+
+fn set_clipboard_text(clipboard: &mut Clipboard, text: String) -> Result<()> {
+    clipboard.set_text(text).map_err(Into::into)
+}
 
 /// Simulate Cmd+V using CoreGraphics keyboard events.
 fn simulate_paste() {
     unsafe {
-        // Key down: Cmd+V
-        let key_down = CGEventCreateKeyboardEvent(std::ptr::null_mut(), KVK_V, true);
-        CGEventSetFlags(key_down, K_CG_EVENT_FLAG_MASK_COMMAND);
-        CGEventPost(K_CG_HID_EVENT_TAP, key_down);
-        CFRelease(key_down);
+        post_command_v_event(true);
+        post_command_v_event(false);
+    }
+}
 
-        // Key up: release V
-        let key_up = CGEventCreateKeyboardEvent(std::ptr::null_mut(), KVK_V, false);
-        CGEventSetFlags(key_up, K_CG_EVENT_FLAG_MASK_COMMAND);
-        CGEventPost(K_CG_HID_EVENT_TAP, key_up);
-        CFRelease(key_up);
+unsafe fn post_command_v_event(key_down: bool) {
+    let event = unsafe { CGEventCreateKeyboardEvent(std::ptr::null_mut(), KVK_V, key_down) };
+    unsafe {
+        CGEventSetFlags(event, K_CG_EVENT_FLAG_MASK_COMMAND);
+        CGEventPost(K_CG_HID_EVENT_TAP, event);
+        CFRelease(event);
     }
 }
 
@@ -104,8 +103,7 @@ fn restore_clipboard_async(previous_text: String, delay: Duration) {
     spawn_delayed_restore(delay, move || {
         let result = (|| -> Result<()> {
             let mut clipboard = Clipboard::new().context("failed to re-open clipboard")?;
-            clipboard
-                .set_text(previous_text)
+            set_clipboard_text(&mut clipboard, previous_text)
                 .context("failed to restore clipboard contents")?;
             Ok(())
         })();

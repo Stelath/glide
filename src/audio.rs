@@ -16,8 +16,7 @@ use crate::{
 };
 
 const RING_BUFFER_SIZE: usize = 8192;
-
-// --- Audio types ---
+const DEFAULT_INPUT_DEVICE: &str = "default";
 
 #[derive(Debug, Clone, Copy)]
 pub enum AudioFormat {
@@ -42,7 +41,10 @@ struct ActiveRecording {
     live_audio: Arc<Mutex<LiveAudioData>>,
 }
 
-// --- Recorder lifecycle ---
+struct InputStreamConfig {
+    stream: StreamConfig,
+    sample_format: SampleFormat,
+}
 
 impl AudioRecorder {
     pub fn new() -> Self {
@@ -53,70 +55,17 @@ impl AudioRecorder {
         anyhow::ensure!(self.active.is_none(), "recording already in progress");
 
         let device = resolve_input_device(config)?;
-        let supported = device
-            .default_input_config()
-            .context("failed to determine default input configuration")?;
-
-        let sample_rate = supported.sample_rate().0;
-
-        let stream_config = StreamConfig {
-            channels: supported.channels(),
-            sample_rate: cpal::SampleRate(sample_rate),
-            buffer_size: cpal::BufferSize::Default,
-        };
-
+        let input_config = default_input_stream_config(&device)?;
+        let sample_rate = input_config.stream.sample_rate.0;
         let samples = Arc::new(Mutex::new(Vec::new()));
-        let live_audio = Arc::new(Mutex::new(LiveAudioData {
-            ring: vec![0.0; RING_BUFFER_SIZE],
-            write_pos: 0,
-            sample_rate,
-        }));
-        let capture_target = samples.clone();
-        let live_target = live_audio.clone();
-        let channels = stream_config.channels;
-
-        let error_callback = |error| {
-            eprintln!("audio stream error: {error}");
-        };
-
-        let stream = match supported.sample_format() {
-            SampleFormat::I16 => device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _| {
-                    push_samples(data, channels, &capture_target, &live_target, |s| {
-                        s as f32 / i16::MAX as f32
-                    })
-                },
-                error_callback,
-                None,
-            )?,
-            SampleFormat::U16 => {
-                let live_target = live_audio.clone();
-                device.build_input_stream(
-                    &stream_config,
-                    move |data: &[u16], _| {
-                        push_samples(data, channels, &capture_target, &live_target, |s| {
-                            (s as f32 / u16::MAX as f32) * 2.0 - 1.0
-                        })
-                    },
-                    error_callback,
-                    None,
-                )?
-            }
-            SampleFormat::F32 => {
-                let live_target = live_audio.clone();
-                device.build_input_stream(
-                    &stream_config,
-                    move |data: &[f32], _| {
-                        push_samples(data, channels, &capture_target, &live_target, |s| s)
-                    },
-                    error_callback,
-                    None,
-                )?
-            }
-            other => anyhow::bail!("unsupported sample format: {other:?}"),
-        };
-
+        let live_audio = live_audio_buffer(sample_rate);
+        let stream = build_input_stream(
+            &device,
+            &input_config.stream,
+            input_config.sample_format,
+            samples.clone(),
+            live_audio.clone(),
+        )?;
         stream.play().context("failed to start audio stream")?;
 
         self.active = Some(ActiveRecording {
@@ -153,24 +102,8 @@ impl AudioRecorder {
         });
         anyhow::ensure!(!samples.is_empty(), "no audio samples were captured");
 
-        let mut bytes = Vec::new();
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-
-        trace.measure_result("audio_stop_wav_encode", || {
-            let mut writer = hound::WavWriter::new(std::io::Cursor::new(&mut bytes), spec)
-                .context("failed to create wav writer")?;
-            for sample in &samples {
-                writer
-                    .write_sample(*sample)
-                    .context("failed to write wav sample")?;
-            }
-            writer.finalize().context("failed to finalize wav")?;
-            Ok(())
+        let bytes = trace.measure_result("audio_stop_wav_encode", || {
+            encode_wav(&samples, sample_rate)
         })?;
 
         trace.record_with_attrs(
@@ -191,11 +124,9 @@ impl AudioRecorder {
     }
 }
 
-// --- Device discovery ---
-
 pub fn list_input_devices() -> Result<Vec<String>> {
     let host = cpal::default_host();
-    let mut devices = vec!["default".to_string()];
+    let mut devices = vec![DEFAULT_INPUT_DEVICE.to_string()];
     for device in host
         .input_devices()
         .context("failed to enumerate input devices")?
@@ -214,7 +145,7 @@ pub fn list_input_devices() -> Result<Vec<String>> {
 fn resolve_input_device(config: &AudioConfig) -> Result<Device> {
     let host = cpal::default_host();
 
-    if config.device == "default" {
+    if config.device == DEFAULT_INPUT_DEVICE {
         return host
             .default_input_device()
             .context("no default input device is available");
@@ -231,7 +162,89 @@ fn resolve_input_device(config: &AudioConfig) -> Result<Device> {
         .with_context(|| format!("input device '{}' was not found", config.device))
 }
 
-// --- Sample conversion ---
+fn default_input_stream_config(device: &Device) -> Result<InputStreamConfig> {
+    // CPAL reports the OS/device preferred input format here. We preserve it for capture
+    // and downmix to mono only in our recorded/live buffers.
+    let supported = device
+        .default_input_config()
+        .context("failed to determine default input configuration")?;
+
+    Ok(InputStreamConfig {
+        stream: supported.config(),
+        sample_format: supported.sample_format(),
+    })
+}
+
+fn live_audio_buffer(sample_rate: u32) -> Arc<Mutex<LiveAudioData>> {
+    Arc::new(Mutex::new(LiveAudioData {
+        ring: vec![0.0; RING_BUFFER_SIZE],
+        write_pos: 0,
+        sample_rate,
+    }))
+}
+
+fn build_input_stream(
+    device: &Device,
+    config: &StreamConfig,
+    sample_format: SampleFormat,
+    samples: Arc<Mutex<Vec<i16>>>,
+    live_audio: Arc<Mutex<LiveAudioData>>,
+) -> Result<Stream> {
+    let channels = config.channels;
+
+    Ok(match sample_format {
+        SampleFormat::I16 => device.build_input_stream(
+            config,
+            move |data: &[i16], _| {
+                push_samples(data, channels, &samples, &live_audio, normalize_i16)
+            },
+            log_stream_error,
+            None,
+        )?,
+        SampleFormat::U16 => device.build_input_stream(
+            config,
+            move |data: &[u16], _| {
+                push_samples(data, channels, &samples, &live_audio, normalize_u16)
+            },
+            log_stream_error,
+            None,
+        )?,
+        SampleFormat::F32 => device.build_input_stream(
+            config,
+            move |data: &[f32], _| {
+                push_samples(data, channels, &samples, &live_audio, normalize_f32)
+            },
+            log_stream_error,
+            None,
+        )?,
+        other => anyhow::bail!("unsupported sample format: {other:?}"),
+    })
+}
+
+fn log_stream_error(error: cpal::StreamError) {
+    eprintln!("audio stream error: {error}");
+}
+
+fn encode_wav(samples: &[i16], sample_rate: u32) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+
+    let mut writer = hound::WavWriter::new(std::io::Cursor::new(&mut bytes), spec)
+        .context("failed to create wav writer")?;
+    for sample in samples {
+        writer
+            .write_sample(*sample)
+            .context("failed to write wav sample")?;
+    }
+    writer.finalize().context("failed to finalize wav")?;
+
+    Ok(bytes)
+}
 
 fn push_samples<S: Copy>(
     data: &[S],
@@ -249,6 +262,18 @@ fn push_samples<S: Copy>(
         &mut samples,
         &mut live,
     );
+}
+
+fn normalize_i16(sample: i16) -> f32 {
+    sample as f32 / i16::MAX as f32
+}
+
+fn normalize_u16(sample: u16) -> f32 {
+    (sample as f32 / u16::MAX as f32) * 2.0 - 1.0
+}
+
+fn normalize_f32(sample: f32) -> f32 {
+    sample
 }
 
 fn push_frames(
@@ -293,6 +318,7 @@ fn push_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use std::sync::{Arc, Mutex};
 
     fn make_live() -> LiveAudioData {
@@ -367,6 +393,21 @@ mod tests {
         assert_eq!(samples[0], 0);
         assert_eq!(samples[1], i16::MAX);
         assert_eq!(samples[2], (-(i16::MAX as f32)) as i16);
+    }
+
+    #[test]
+    fn encode_wav_round_trips_samples() {
+        let expected = vec![0, i16::MAX, -1234];
+        let bytes = encode_wav(&expected, 16_000).unwrap();
+        let mut reader = hound::WavReader::new(Cursor::new(bytes)).unwrap();
+
+        assert_eq!(reader.spec().channels, 1);
+        assert_eq!(reader.spec().sample_rate, 16_000);
+        let actual = reader
+            .samples::<i16>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]
