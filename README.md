@@ -85,6 +85,17 @@ Unlike standard dictation utilities, Glide stays lightweight and provides minima
 
 ---
 
+## 🏞 Roadmap
+
+- [x] Add API Providers
+- [x] Add Local Model Support
+- [x] Add Styles
+- [x] Add dictionary
+- [ ] Add app context
+- [ ] Add smart file references for agent dictation
+
+---
+
 ## 📥 Installation
 
 Glide is designed exclusively for macOS.
@@ -152,8 +163,7 @@ trigger = "f8"        # Hold to dictate
 toggle_trigger = "f9" # Toggle dictation
 
 [audio]
-sample_rate = 16000
-channels = 1
+device = "default"
 
 [dictation.stt]
 provider = "openai"
