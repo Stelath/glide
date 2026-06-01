@@ -16,7 +16,7 @@ use crate::{
     engines::model_assets::{self, ParakeetInstallState},
 };
 #[cfg(test)]
-use catalog::{fallback_llm_models, fallback_stt_models, local_llm_models};
+use catalog::{fallback_llm_models, fallback_stt_models};
 #[cfg(test)]
 use remote::{
     ElevenLabsModelsResponseEntry, append_elevenlabs_scribe_models, excluded_remote_llm_model,

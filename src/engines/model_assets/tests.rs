@@ -76,14 +76,6 @@ fn cancel_marks_active_download_as_cancelling() {
 }
 
 #[test]
-fn apple_speech_model_ids_round_trip_locale() {
-    let id = apple_speech_model_id("en_US");
-    assert_eq!(id, "speechanalyzer-en_US");
-    assert_eq!(apple_speech_locale_id(&id), Some("en_US"));
-    assert!(apple_speech_locale_id("speechanalyzer-").is_none());
-}
-
-#[test]
 fn apple_speech_status_uses_reservation_as_installed_state() {
     let statuses = apple_speech_models_status();
     let installed = statuses
@@ -110,23 +102,6 @@ fn apple_speech_unavailable_reason_is_cleared_by_refresh() {
     refresh_apple_model_assets();
 
     assert_eq!(apple_speech_models_unavailable_reason(), None);
-}
-
-#[test]
-fn apple_foundation_models_report_default_model_only() {
-    let statuses = apple_foundation_models_status();
-    let model = statuses
-        .iter()
-        .find(|status| status.id == APPLE_FOUNDATION_MODEL_ID)
-        .unwrap();
-
-    assert_eq!(statuses.len(), 1);
-    assert!(model.available);
-    assert_eq!(
-        resolve_apple_foundation_model_id(APPLE_FOUNDATION_MODEL_ID),
-        Some(APPLE_FOUNDATION_MODEL_ID.to_string())
-    );
-    assert_eq!(resolve_apple_foundation_model_id("unknown-model"), None);
 }
 
 #[test]

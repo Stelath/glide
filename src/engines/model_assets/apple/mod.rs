@@ -11,8 +11,6 @@ pub use foundation::{
     apple_foundation_models_status, first_available_apple_foundation_model,
     resolve_apple_foundation_model_id,
 };
-#[cfg(test)]
-pub use speech::apple_speech_model_id;
 pub use speech::{
     apple_speech_install_state, apple_speech_locale_id, apple_speech_models_status,
     apple_speech_models_unavailable_reason, first_installed_apple_speech_model,

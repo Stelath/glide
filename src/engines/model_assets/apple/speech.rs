@@ -14,7 +14,7 @@ static APPLE_SPEECH_MODELS: OnceLock<Mutex<Option<Vec<AppleSpeechModelDefinition
 static APPLE_SPEECH_MODELS_UNAVAILABLE_REASON: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 #[cfg(test)]
-pub fn apple_speech_model_id(locale_id: &str) -> String {
+fn apple_speech_model_id(locale_id: &str) -> String {
     format!("{APPLE_SPEECH_MODEL_PREFIX}{locale_id}")
 }
 

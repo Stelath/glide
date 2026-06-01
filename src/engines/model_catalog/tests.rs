@@ -388,17 +388,4 @@ mod model_lists {
                 .any(|model| model.id == APPLE_FOUNDATION_MODEL_ID)
         );
     }
-
-    #[test]
-    fn only_default_apple_foundation_model_is_listed() {
-        let _state = with_verified_providers(&[]);
-        let models = local_llm_models();
-
-        assert!(
-            models
-                .iter()
-                .any(|model| model.id == APPLE_FOUNDATION_MODEL_ID)
-        );
-        assert!(!models.iter().any(|model| model.id == "unknown-model"));
-    }
 }

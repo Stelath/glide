@@ -7,8 +7,6 @@ mod apple;
 mod lifecycle;
 mod parakeet;
 
-#[cfg(test)]
-pub use apple::apple_speech_model_id;
 #[allow(unused_imports)]
 pub use apple::{
     APPLE_FOUNDATION_MODEL_ID, APPLE_SPEECH_MODEL_PREFIX, AppleFoundationModelStatus,

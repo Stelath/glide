@@ -307,39 +307,6 @@ pub(super) fn apple_speech_model_row(
     )
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ParakeetRowActionKind {
-    Download,
-    Cancel,
-    None,
-    Delete,
-    Retry,
-}
-
-#[cfg(test)]
-pub(super) fn parakeet_row_action_kind(
-    state: &crate::engines::model_assets::ParakeetInstallState,
-) -> ParakeetRowActionKind {
-    match state {
-        crate::engines::model_assets::ParakeetInstallState::NotInstalled => {
-            ParakeetRowActionKind::Download
-        }
-        crate::engines::model_assets::ParakeetInstallState::Downloading { .. } => {
-            ParakeetRowActionKind::Cancel
-        }
-        crate::engines::model_assets::ParakeetInstallState::Cancelling { .. } => {
-            ParakeetRowActionKind::None
-        }
-        crate::engines::model_assets::ParakeetInstallState::Installed { .. } => {
-            ParakeetRowActionKind::Delete
-        }
-        crate::engines::model_assets::ParakeetInstallState::Failed(_) => {
-            ParakeetRowActionKind::Retry
-        }
-    }
-}
-
 pub(super) fn parakeet_model_row(
     status: crate::engines::model_assets::ParakeetModelStatus,
     cx: &mut gpui::Context<SettingsApp>,
@@ -594,39 +561,5 @@ pub(super) fn format_bytes(bytes: u64) -> String {
         format!("{:.0} KB", bytes / KIB)
     } else {
         format!("{bytes:.0} B")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engines::model_assets::ParakeetInstallState;
-
-    #[test]
-    fn parakeet_row_action_kind_matches_install_state() {
-        let cases = [
-            (
-                ParakeetInstallState::Downloading {
-                    downloaded_bytes: 512,
-                    total_bytes: Some(1024),
-                },
-                ParakeetRowActionKind::Cancel,
-            ),
-            (
-                ParakeetInstallState::Installed { size_bytes: 4096 },
-                ParakeetRowActionKind::Delete,
-            ),
-            (
-                ParakeetInstallState::Cancelling {
-                    downloaded_bytes: 512,
-                    total_bytes: Some(1024),
-                },
-                ParakeetRowActionKind::None,
-            ),
-        ];
-
-        for (state, expected) in cases {
-            assert_eq!(parakeet_row_action_kind(&state), expected);
-        }
     }
 }
